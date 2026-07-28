@@ -1,0 +1,19 @@
+# Based on pydata/xarray
+codecov:
+  require_ci_to_pass: no
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+    changes: false
+
+comment:
+  layout: diff, flags, files
+  behavior: once
+  require_base: no

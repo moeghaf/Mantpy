@@ -1,0 +1,226 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = [ "hatch-vcs", "hatchling" ]
+
+[project]
+name = "mantpy"
+description = "A framework for extracellular matrix analysis in spatial omics"
+readme = "README.md"
+keywords = [ "AnnData", "extracellular matrix", "graph", "scverse", "spatial omics" ]
+license = { file = "LICENSE" }
+maintainers = [
+  { name = "Mohamed Ghafoor", email = "moeghaf@gmail.com" },
+]
+authors = [
+  { name = "Mohamed Ghafoor" },
+]
+requires-python = ">=3.11"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dynamic = [ "version" ]
+dependencies = [
+  # >=0.12 is required, not cosmetic: pandas>=3 turns on `future.infer_string`,
+  # so every string column/index is Arrow-backed, and anndata<0.12 has no
+  # writer for it — `write_h5ad` dies with "No method registered for writing
+  # ArrowStringArray". 0.12 added support. Without this, mantpy objects cannot
+  # be serialised at all on a modern pandas.
+  "anndata>=0.12",
+  "dask[array]>=2024.10",
+  "igraph>=0.10",
+  "leidenalg>=0.10",
+  "joblib>=1.3",
+  "matplotlib>=3.8",
+  "networkx>=3.2",
+  "numpy>=1.24",
+  "pandas>=2.1",
+  "pillow>=10",
+  "pooch>=1.8",
+  "requests>=2.28",
+  # Imported directly by Mantpy's analysis tools. The <1.13 cap is a forward
+  # guard, not redundancy: squidpy declares `scanpy>=1.9.3` with no upper bound,
+  # and scanpy 1.13.0a1 relocated the legacy plotting tree that squidpy 1.8.x
+  # imports unconditionally at module scope.
+  "scanpy>=1.10,<1.13",
+  "scikit-image>=0.21",
+  "scikit-learn>=1.4",
+  "scipy>=1.11",
+  "seaborn>=0.13",
+  # >=1.8.2 is load-bearing: it requires spatialdata>=0.7.2, which dropped the
+  # `xarray-schema` dependency. xarray-schema 0.0.3 imports `pkg_resources` at
+  # module scope, and setuptools 82 removed it — so anything below this floor
+  # forces a `setuptools<82` cap onto every downstream consumer of Mantpy.
+  "squidpy>=1.8.2",
+  # tifffile <2026.5.2 imports `zarr.core.chunk_grids.RegularChunkGrid` at
+  # module scope; zarr 3.2.0 removed it, so `tifffile.imread(aszarr=True)`
+  # (im.py) fails. Upstream fixed this in tifffile 2026.5.2, which pulls
+  # zarr>=3.2 via its own `zarr` extra — but that release requires Python
+  # >=3.12. On 3.11 the broken pair is already unreachable, since zarr 3.2 and
+  # tifffile 2026.4.11+ both require >=3.12; the 3.11 bounds below state that
+  # invariant explicitly rather than depending on upstream keeping it.
+  "tifffile[zarr]>=2026.5.2; python_version >= '3.12'",
+  "tifffile[zarr]>=2025.5.21,<2026.4.11; python_version < '3.12'",
+  "tqdm>=4.66",
+  "zarr>=3.1,<3.2; python_version < '3.12'",
+]
+optional-dependencies.gnn = [
+  "captum>=0.7",
+  "torch>=2.3",
+  "torch-geometric>=2.5",
+]
+optional-dependencies.patch = [
+  "pytorch-lightning>=2.2",
+  "torch>=2.3",
+]
+optional-dependencies.segment = [ "cellpose>=4" ]
+optional-dependencies.spatial = [ "spatialdata>=0.1" ]
+optional-dependencies.topology = [ "gudhi>=3.13" ]
+# https://docs.pypi.org/project_metadata/#project-urls
+urls.Documentation = "https://mantpy.readthedocs.io/"
+urls.Homepage = "https://github.com/moeghaf/Mantpy"
+urls.Issues = "https://github.com/moeghaf/Mantpy/issues"
+urls.Source = "https://github.com/moeghaf/Mantpy"
+
+[dependency-groups]
+dev = [
+  "pre-commit",
+  "twine>=4.0.2",
+]
+test = [
+  "coverage>=7.10",
+  "pytest",
+  "responses>=0.25",
+]
+doc = [
+  # myst-nb supersedes myst-parser and adds execution of `{code-cell}` blocks;
+  # it depends on myst-parser, so listing both would risk a version split.
+  "myst-nb>=1.1",
+  "pandas",
+  "setuptools<81",
+  "sphinx>=8.1,<10",
+  "sphinx-autodoc-typehints",
+  "sphinx-book-theme>=1",
+  "sphinx-copybutton",
+  "sphinx-design",
+  "sphinxcontrib-katex",
+  "sphinxext-opengraph",
+]
+
+[tool.hatch]
+version.source = "vcs"
+build.hooks.vcs.version-file = "src/mantpy/_version.py"
+build.targets.wheel.packages = [ "src/mantpy" ]
+envs.default.installer = "uv"
+envs.default.dependency-groups = [ "dev" ]
+envs.docs.dependency-groups = [ "doc" ]
+envs.docs.features = [ "gnn", "patch" ]
+envs.docs.scripts.build = "sphinx-build -M html docs docs/_build -W {args}"
+envs.docs.scripts.open = "python -m webbrowser -t docs/_build/html/index.html"
+envs.docs.scripts.clean = "git clean -fdX -- {args:docs}"
+envs.hatch-test.dependency-groups = [ "dev", "test" ]
+envs.hatch-test.features = [ "gnn", "patch", "topology" ]
+envs.hatch-test.matrix = [
+  # Test the lowest and highest supported Python versions with normal deps
+  { deps = [ "stable" ], python = [ "3.11", "3.14" ] },
+  # Test the newest supported Python version also with pre-release deps
+  { deps = [ "pre" ], python = [ "3.14" ] },
+]
+# If the matrix variable `deps` is set to "pre",
+# set the environment variable `UV_PRERELEASE` to "allow".
+envs.hatch-test.overrides.matrix.deps.env-vars = [
+  { key = "UV_PRERELEASE", value = "allow", if = [ "pre" ] },
+]
+# Known blind spot: PEP 440's exclusive-ordered-comparison rule means the
+# `scanpy<1.13` cap also excludes 1.13 pre-releases, so this leg cannot see
+# them. That cap is deliberate (see the scanpy entry above) and is the only
+# remaining upper bound in `dependencies`, so every other package is still
+# canaried here. Revisit once squidpy supports scanpy 1.13.
+
+# Resolve torch from PyTorch's CPU index for every environment uv builds here
+# (docs, CI, local dev). This affects only how *this project's* environments are
+# built — `[tool.uv]` is not published in the wheel, so installers of Mantpy are
+# unaffected and still get whatever torch their platform resolves.
+#
+# The reason is Read the Docs: the PyPI Linux torch wheel is 527 MB and declares
+# nvidia-cudnn/cusparselt/nccl/nvshmem plus triton, which transitively pull the
+# CUDA toolkit — comfortably past RTD Community's 15-minute and 5 GB build
+# limits before Sphinx even starts. Nothing here needs CUDA: the docs build only
+# imports torch so autodoc can resolve `mantpy.nn` signatures, CI has no GPU,
+# and the project's own frozen reproduction lockfile already pins torch+cpu.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [ { index = "pytorch-cpu" } ]
+
+[tool.ruff]
+line-length = 120
+src = [ "src" ]
+format.docstring-code-format = true
+lint.select = [
+  "B",      # flake8-bugbear
+  "BLE",    # flake8-blind-except
+  "C4",     # flake8-comprehensions
+  "D",      # pydocstyle
+  "E",      # Error detected by Pycodestyle
+  "F",      # Errors detected by Pyflakes
+  "I",      # isort
+  "RUF100", # Report unused noqa directives
+  "T20",    # flake8-print — no print() in library code (use logging)
+  "TID",    # flake8-tidy-imports
+  "UP",     # pyupgrade
+  "W",      # Warning detected by Pycodestyle
+]
+lint.ignore = [
+  "B008", # Errors from function calls in argument defaults. These are fine when the result is immutable.
+  "D100", # Missing docstring in public module
+  "D104", # Missing docstring in public package
+  "D105", # __magic__ methods are often self-explanatory, allow missing docstrings
+  "D107", # Missing docstring in __init__
+  # Disable one in each pair of mutually incompatible rules
+  "D203", # We don't want a blank line before a class docstring
+  "D213", # <> We want docstrings to start immediately after the opening triple quote
+  "D400", # first line should end with a period [Bug: doesn't work with single-line docstrings]
+  "D401", # First line should be in imperative mood; try rephrasing
+  "E501", # line too long -> we accept long comment lines; formatter gets rid of long code lines
+  "E731", # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
+  "E741", # allow I, O, l as variable names -> I is the identity matrix
+]
+lint.per-file-ignores."*/__init__.py" = [ "F401" ]
+lint.per-file-ignores."docs/*" = [ "I" ]
+lint.per-file-ignores."tests/*" = [ "D" ]
+lint.pydocstyle.convention = "numpy"
+
+[tool.pytest.ini_options]
+xfail_strict = true
+testpaths = [ "tests" ]
+addopts = [
+  "--import-mode=importlib", # allow using test files with same name
+]
+
+[tool.coverage]
+run.omit = [
+  "**/test_*.py",
+]
+run.patch = [ "subprocess" ]
+run.source = [ "mantpy" ]
+
+[tool.cruft]
+skip = [
+  ".git",
+  "tests",
+  "src/**/__init__.py",
+  "src/**/basic.py",
+  "docs/api.md",
+  "docs/changelog.md",
+]

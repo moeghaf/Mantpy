@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use Mantpy, please cite the paper and the software archive below."
+title: "Mantpy: a framework for extracellular matrix analysis in spatial proteomics"
+type: software
+authors:
+  - family-names: Ghafoor
+    given-names: Mohamed
+repository-code: "https://github.com/moeghaf/Mantpy"
+url: "https://mantpy.readthedocs.io"
+license: MIT
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21538382
+    description: "ECM-inclusive datasets archive"
+preferred-citation:
+  type: article
+  title: "Mantpy: a framework for extracellular matrix analysis in spatial proteomics"
+  authors:
+    - family-names: Ghafoor
+      given-names: Mohamed
+    - family-names: Parkinson
+      given-names: James E.
+    - family-names: Pham
+      given-names: Thao
+    - family-names: Georgaka
+      given-names: Sokratia
+    - family-names: Haley
+      given-names: Michael J.
+    - family-names: Jokl
+      given-names: Elliot
+    - family-names: Piper Hanley
+      given-names: Karen
+    - family-names: Sutherland
+      given-names: Tara E.
+    - family-names: Rattray
+      given-names: Magnus
+  year: 2026
+  notes: "Preprint DOI to be added on bioRxiv posting."

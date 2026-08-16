@@ -19,7 +19,6 @@ from mantpy.datasets._toy import toy_ecm_roi
 __all__ = [
     "balbc_pbs_lung",
     "coliv_intestine",
-    "prostate_he_visium",
     "schistosoma_ecm",
     "toy_ecm_roi",
 ]

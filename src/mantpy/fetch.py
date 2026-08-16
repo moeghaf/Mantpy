@@ -32,8 +32,6 @@ __all__ = [
     "fetch_matrisome",
     "load_balbc_pbs_lung",
     "load_coliv_intestine",
-    "load_prostate_cell_segmentation",
-    "load_prostate_he_visium",
     "load_schistosoma_ecm_cohort",
 ]
 

@@ -938,11 +938,21 @@ def build_cell_ecm_graph(
         )
         mode = "cell+ecm"
     elif has_ecm:
-        _log.info("No cell graph found — building ECM-only combined graph. Cross edges will not be added.")
+        warnings.warn(
+            "No cell graph found — building an ECM-only combined graph; cross edges will "
+            "not be added. Run mt.gr.build_cell_graph first for a joint cell–ECM graph.",
+            UserWarning,
+            stacklevel=2,
+        )
         G = adata.uns[ECM_GRAPH_KEY].copy()
         mode = "ecm-only"
     else:
-        _log.info("No ECM graph found — building cell-only combined graph. Cross edges will not be added.")
+        warnings.warn(
+            "No ECM graph found — building a cell-only combined graph; cross edges will "
+            "not be added. Run mt.gr.build_ecm_graph first for a joint cell–ECM graph.",
+            UserWarning,
+            stacklevel=2,
+        )
         G = adata.uns[cell_graph_key].copy()
         mode = "cell-only"
 

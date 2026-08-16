@@ -20,6 +20,6 @@ and this project adheres to [Semantic Versioning][].
   neighbour-composition baselines.
 - Reusable plotting, palette, and explicit publication-style helpers for Mantpy
   analysis outputs.
-- Verified one-line loaders for the four public tutorial datasets, with safe
+- Verified one-line loaders for the public tutorial datasets, with safe
   caching, integrity checks, progress reporting, and source citations.
 - Scanpy, Squidpy, PyTorch Geometric, SpatialData, and H5AD interoperability.

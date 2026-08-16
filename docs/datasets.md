@@ -1,6 +1,6 @@
 # Public datasets
 
-Mantpy provides one-line access to the four datasets used in its public
+Mantpy provides one-line access to the three datasets used in its public
 tutorials:
 
 ```python
@@ -9,7 +9,6 @@ import mantpy as mt
 intestine = mt.datasets.coliv_intestine()
 lung = mt.datasets.balbc_pbs_lung()
 liver = mt.datasets.schistosoma_ecm()
-prostate = mt.datasets.prostate_he_visium()
 ```
 
 The data are not bundled in the Python wheel. Each call downloads one archive
@@ -41,10 +40,6 @@ Each returned bundle has:
 Quick-start files are never silently substituted for raw data. Tutorials choose
 whether to use them, validate their scientific metadata, and otherwise run the
 full workflow from the raw inputs.
-
-The prostate loader obtains the human Matrisome masterlist from the
-authoritative Matrisome Project export. Mantpy pins its expected SHA-256, so an
-upstream revision cannot silently change the tutorial gene universe.
 
 ## Local verified bundles
 

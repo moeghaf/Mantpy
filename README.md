@@ -109,7 +109,6 @@ package and reused offline:
 intestine = mt.datasets.coliv_intestine()   #  93 MB
 lung = mt.datasets.balbc_pbs_lung()         #  71 MB
 liver = mt.datasets.schistosoma_ecm()       #  38 MB
-prostate = mt.datasets.prostate_he_visium() # 194 MB
 ```
 
 Every loader returns the same `Bunch` shape as `toy_ecm_roi`, so moving an

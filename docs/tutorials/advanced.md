@@ -32,11 +32,6 @@ Every dataset comes from a single immutable, checksummed
   - ECM topology around granulomas, including persistent-homology summaries
   - 38 MB
   - [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/moeghaf/mantpy_reproducibility/blob/main/notebooks/schistosoma_ecm_liver.ipynb)
-* - **Prostate (H&E + Visium)**
-  - ECM patches from H&E registered against Visium spots and pathology
-    annotation
-  - 194 MB
-  - [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/moeghaf/mantpy_reproducibility/blob/main/notebooks/prostate_he_visium.ipynb)
 :::
 
 ## Fast mode and full mode
@@ -69,9 +64,7 @@ MANTPY_TUTORIAL_MODE=fast   # or full
 
 If you are new to Mantpy, the mouse lung workflow is the most direct
 continuation of these tutorials — it is the cell–ECM graph you have already
-built, applied to a real cohort. The prostate workflow is the one to read if
-your data is H&E rather than multiplexed imaging, since the patch-extraction
-path there is quite different.
+built, applied to a real cohort.
 
 :::{note}
 The Colab links resolve once the reproducibility repository is public. Until

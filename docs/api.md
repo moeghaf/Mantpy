@@ -315,8 +315,6 @@ local-file workflows used by earlier scripts.
     fetch_matrisome
     load_balbc_pbs_lung
     load_coliv_intestine
-    load_prostate_cell_segmentation
-    load_prostate_he_visium
     load_schistosoma_ecm_cohort
 ```
 
@@ -332,7 +330,6 @@ import mantpy as mt
 data = mt.datasets.coliv_intestine()
 data = mt.datasets.balbc_pbs_lung()
 data = mt.datasets.schistosoma_ecm()
-data = mt.datasets.prostate_he_visium()
 ```
 
 Each loader accepts `cache_dir=...`; `MANTPY_CACHE` is used when that argument
@@ -353,7 +350,6 @@ cluster labels and statistics describe the generator, not biology.
 
     balbc_pbs_lung
     coliv_intestine
-    prostate_he_visium
     schistosoma_ecm
     toy_ecm_roi
 ```

@@ -1,0 +1,35 @@
+# Temp files
+.DS_Store
+*~
+buck-out/
+
+# IDEs
+/.idea/
+/.vscode/
+
+# Compiled files
+.venv*/
+__pycache__/
+.*cache/
+
+# Distribution / packaging
+/dist/
+
+# Tests and coverage
+/data/
+/node_modules/
+/.coverage*
+
+# docs
+/docs/generated/
+/docs/_build/
+
+# Local-only tooling / editor workspaces
+.claude/
+.codex/
+
+# Stray test render artifact
+/tests/_bgfix_triptych.png
+
+# hatch-vcs auto-generated version file
+src/mantpy/_version.py

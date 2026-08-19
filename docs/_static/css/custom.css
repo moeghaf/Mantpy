@@ -1,0 +1,248 @@
+/* Reduce the font size in data frames - See https://github.com/scverse/cookiecutter-scverse/issues/193 */
+div.cell_output table.dataframe {
+    font-size: 0.8em;
+}
+
+/* ===========================================================================
+   mantpy brand theme
+   ---------------------------------------------------------------------------
+   Colours sampled directly from docs/_static/mantpy_logo.png:
+
+     #603890  manta body / "mant" wordmark   8.52:1 on white
+     #4A2372  manta outline                 11.83:1 on white
+     #E7761A  the "py" wordmark              3.00:1 on white
+
+   The orange is restricted to accents and large headings in light mode. At
+   3.00:1 it sits exactly on the WCAG AA large-text threshold, so #B85C10
+   (4.59:1) carries any orange *text*; the raw logo orange is used only for
+   rules, borders and markers. Both brand colours are lightened for dark mode,
+   where they clear AA comfortably.
+
+   The sidebar is a dark panel in both colour schemes, after squidpy — but
+   tinted with the logo's outline purple rather than a neutral navy.
+
+   sphinx-book-theme builds on pydata-sphinx-theme, so these override its
+   CSS custom properties rather than restyling components directly.
+   =========================================================================== */
+
+html {
+    --mantpy-purple: #603890;
+    --mantpy-purple-deep: #4A2372;
+    --mantpy-orange: #E7761A;
+    --mantpy-orange-text: #B85C10;
+    --mantpy-purple-light: #B794D9;
+    --mantpy-orange-light: #F5A05A;
+
+    /* dark sidebar panel, shared by both colour schemes */
+    --mantpy-sidebar-bg: #2E1A47;
+    --mantpy-sidebar-text: #ECEEF4;
+    --mantpy-sidebar-muted: rgba(236, 238, 244, 0.62);
+    --mantpy-sidebar-rule: rgba(236, 238, 244, 0.14);
+}
+
+html[data-theme="light"] {
+    --pst-color-primary: var(--mantpy-purple);
+    --pst-color-primary-highlight: var(--mantpy-purple-deep);
+    --pst-color-secondary: var(--mantpy-orange-text);
+    --pst-color-secondary-highlight: var(--mantpy-orange);
+    --pst-color-link: var(--mantpy-purple);
+    --pst-color-link-hover: var(--mantpy-orange-text);
+    --pst-color-inline-code: var(--mantpy-purple-deep);
+    --pst-color-accent: var(--mantpy-orange);
+
+    --mantpy-subtitle: var(--mantpy-orange-text);
+}
+
+html[data-theme="dark"] {
+    --pst-color-primary: var(--mantpy-purple-light);
+    --pst-color-primary-highlight: #C9AEE6;
+    --pst-color-secondary: var(--mantpy-orange-light);
+    --pst-color-secondary-highlight: #FFB877;
+    --pst-color-link: var(--mantpy-purple-light);
+    --pst-color-link-hover: var(--mantpy-orange-light);
+    --pst-color-inline-code: #D6BFF0;
+    --pst-color-accent: var(--mantpy-orange-light);
+
+    --mantpy-subtitle: var(--mantpy-orange-light);
+}
+
+/* --- Headings: neutral h1 over an orange rule, orange subtitles ----------
+   After pertpy's warm section headings. pertpy's own #e89217 is 2.45:1 on
+   white and fails AA even as large text, so the hue is borrowed but not the
+   value. h4+ stays neutral: it is small enough that colour would hurt. */
+
+h1 {
+    border-bottom: 3px solid var(--mantpy-orange);
+    padding-bottom: 0.3em;
+}
+
+article h2,
+article h3,
+.bd-article h2,
+.bd-article h3 {
+    color: var(--mantpy-subtitle);
+}
+
+/* --- Sidebar: dark brand panel in both colour schemes --------------------- */
+
+.bd-sidebar-primary {
+    background-color: var(--mantpy-sidebar-bg);
+    color: var(--mantpy-sidebar-text);
+    border-right: 1px solid var(--mantpy-sidebar-rule);
+}
+
+.bd-sidebar-primary .bd-links a,
+.bd-sidebar-primary nav.bd-links li > a,
+.bd-sidebar-primary .toctree-l1 > a,
+.bd-sidebar-primary .toctree-l2 > a {
+    color: var(--mantpy-sidebar-text);
+}
+
+.bd-sidebar-primary nav.bd-links li > a:hover,
+.bd-sidebar-primary .bd-links a:hover {
+    color: var(--mantpy-orange-light);
+    background-color: transparent;
+}
+
+.bd-sidebar-primary nav.bd-links .current > a {
+    color: #FFFFFF;
+    font-weight: 600;
+    border-left: 3px solid var(--mantpy-orange);
+    padding-left: 0.75rem;
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* toctree captions ("Getting started", "Tutorials", ...)
+   The theme sets these with `nav.bd-links p.caption` (specificity 0,2,2) to
+   --pst-color-text-base, which is near-black in light mode and would be
+   invisible on the dark panel. Match through nav.bd-links to outrank it. */
+.bd-sidebar-primary nav.bd-links p.caption,
+.bd-sidebar-primary nav.bd-links p.caption .caption-text,
+.bd-sidebar-primary nav.bd-links .caption-text {
+    color: var(--mantpy-orange-light);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+/* muted furniture: version label, brand text, section header */
+.bd-sidebar-primary .navbar-brand,
+.bd-sidebar-primary .sidebar-header-items,
+.bd-sidebar-primary .bd-sidebar__top,
+.bd-sidebar-primary label,
+.bd-sidebar-primary .h5 {
+    color: var(--mantpy-sidebar-text);
+}
+
+.bd-sidebar-primary .version,
+.bd-sidebar-primary small {
+    color: var(--mantpy-sidebar-muted);
+}
+
+/* search field sitting on the dark panel */
+.bd-sidebar-primary .bd-search input,
+.bd-sidebar-primary form.bd-search input {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--mantpy-sidebar-text);
+    border: 1px solid rgba(236, 238, 244, 0.22);
+}
+
+.bd-sidebar-primary .bd-search input::placeholder {
+    color: var(--mantpy-sidebar-muted);
+}
+
+.bd-sidebar-primary .bd-search input:focus {
+    border-color: var(--mantpy-orange);
+    box-shadow: 0 0 0 2px rgba(231, 118, 26, 0.35);
+}
+
+.bd-sidebar-primary .search-button__kbd-shortcut,
+.bd-sidebar-primary kbd {
+    background-color: rgba(255, 255, 255, 0.10);
+    color: var(--mantpy-sidebar-muted);
+    border-color: rgba(236, 238, 244, 0.22);
+}
+
+/* --- In-page "On this page" contents (right side, stays on page bg) ------ */
+
+.toc-entry a.nav-link.active {
+    color: var(--pst-color-primary);
+    border-left: 2px solid var(--mantpy-orange);
+    font-weight: 600;
+}
+
+/* --- Inline code and literals -------------------------------------------- */
+
+code.literal,
+.rst-content code.literal {
+    color: var(--pst-color-inline-code);
+    border: 1px solid rgba(96, 56, 144, 0.22);
+    border-radius: 3px;
+}
+
+html[data-theme="dark"] code.literal {
+    border-color: rgba(183, 148, 217, 0.3);
+}
+
+/* --- Admonitions: deliberately NOT re-coloured ---------------------------
+   note/tip/warning/danger keep their semantic palette. Branding `tip` orange
+   would make it indistinguishable from `warning`, which these docs actually
+   use — severity has to stay readable at a glance, so the brand stops here. */
+
+/* --- API reference: purple signatures, orange parameter names ------------ */
+
+dl.py > dt {
+    border-left: 3px solid var(--mantpy-purple);
+    background-color: rgba(96, 56, 144, 0.06);
+}
+
+html[data-theme="dark"] dl.py > dt {
+    border-left-color: var(--mantpy-purple-light);
+    background-color: rgba(183, 148, 217, 0.09);
+}
+
+dl.field-list > dt {
+    color: var(--pst-color-secondary);
+}
+
+/* --- Tables: purple header band ------------------------------------------ */
+
+table.docutils thead th,
+.table thead th {
+    background-color: rgba(96, 56, 144, 0.10);
+    border-bottom: 2px solid var(--mantpy-purple);
+}
+
+html[data-theme="dark"] table.docutils thead th,
+html[data-theme="dark"] .table thead th {
+    background-color: rgba(183, 148, 217, 0.14);
+    border-bottom-color: var(--mantpy-purple-light);
+}
+
+/* --- Executed-notebook output: tint the cell gutter ---------------------- */
+
+div.cell div.cell_input {
+    border-left: 3px solid var(--mantpy-purple);
+}
+
+div.cell div.cell_output {
+    border-left: 3px solid var(--mantpy-orange);
+}
+
+/* --- Logo ----------------------------------------------------------------
+   mantpy_logo.png ships with an opaque white background (not transparency),
+   so against the dark sidebar it would read as a stray white rectangle.
+   Padding and a radius turn it into a deliberate card instead. */
+
+.sidebar-logo,
+img.logo__image {
+    max-width: 100%;
+    max-height: 4rem;
+}
+
+.bd-sidebar-primary .sidebar-logo,
+.bd-sidebar-primary img.logo__image,
+.bd-sidebar-primary .navbar-brand img {
+    background-color: #FFFFFF;
+    padding: 0.35rem 0.55rem;
+    border-radius: 8px;
+}

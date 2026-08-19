@@ -1,0 +1,20 @@
+{
+  "template": "https://github.com/scverse/cookiecutter-scverse",
+  "commit": "e2ed7b27425642fa3eb759f0457a2d5d9bd961f2",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "mantpy",
+      "package_name": "mantpy",
+      "project_description": "scverse-aligned spatial omics and ECM analysis on multiplexed imaging and spatial transcriptomics",
+      "author_full_name": "Mohamed Ghafoor",
+      "author_email": "moeghaf@gmail.com",
+      "github_user": "moeghaf",
+      "github_repo": "Mantpy",
+      "license": "MIT License",
+      "ide_integration": "false",
+      "_template": "https://github.com/scverse/cookiecutter-scverse"
+    }
+  },
+  "directory": null
+}

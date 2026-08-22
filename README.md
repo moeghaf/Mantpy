@@ -6,9 +6,11 @@
 
 [![Tests][badge-tests]][tests]
 [![Documentation][badge-docs]][documentation]
+[![Preprint][badge-preprint]][preprint]
 
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/moeghaf/Mantpy/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/mantpy
+[badge-preprint]: https://img.shields.io/badge/bioRxiv-10.1101%2F2025.06.04.657781-b31b1b
 
 Mantpy is a scverse-based framework for graph analysis of the extracellular
 matrix (ECM) in spatial proteomics. It represents cells and ECM patches as distinct,
@@ -97,7 +99,7 @@ Step-by-step guides, each executed when the documentation is built:
 - [Exporting to AnnData](https://mantpy.readthedocs.io/en/latest/tutorials/export-anndata.html)
 - [Exporting to PyTorch Geometric](https://mantpy.readthedocs.io/en/latest/tutorials/export-pytorch-geometric.html)
 
-The full manuscript analyses run on real cohorts in the
+The full analyses behind the [preprint][] run on real cohorts in the
 [reproducibility repository][tutorials]; the intestine and lung workflows
 open directly in Colab.
 
@@ -121,11 +123,26 @@ under CC BY 4.0 in an immutable
 
 [Documentation][] · [API reference][api documentation] · [Changelog][changelog]
 
+## Citation
+
+If you use Mantpy, please cite the preprint:
+
+> Ghafoor M, Parkinson JE, Pham T, Georgaka S, Haley MJ, Jokl E, Piper Hanley K,
+> Allen JE, Sutherland TE, Rattray M. **Mantpy: a framework for extracellular
+> matrix analysis in spatial proteomics.** *bioRxiv* (2026).
+> doi: [10.1101/2025.06.04.657781](https://doi.org/10.1101/2025.06.04.657781)
+
+Machine-readable citation metadata is in
+[`CITATION.cff`](https://github.com/moeghaf/Mantpy/blob/main/CITATION.cff)
+(GitHub's "Cite this repository" button). The tutorial datasets have their own
+[Zenodo DOI](https://doi.org/10.5281/zenodo.21538382).
+
 ## Contact
 
 For questions and help requests, use the [scverse discourse][]. To report a
 bug, use the [issue tracker][].
 
+[preprint]: https://doi.org/10.1101/2025.06.04.657781
 [scverse discourse]: https://discourse.scverse.org/
 [tutorials]: https://github.com/moeghaf/mantpy_reproducibility
 [issue tracker]: https://github.com/moeghaf/Mantpy/issues

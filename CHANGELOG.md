@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning][].
 
 ## [Unreleased]
 
+### Added
+
+- The bioRxiv preprint DOI (`10.1101/2025.06.04.657781`) in `CITATION.cff`,
+  the README citation section and the package metadata (`Preprint` URL).
+
+### Fixed
+
+- `CITATION.cff` now lists all ten preprint authors.
+
 ## [1.0.0] - 2026-08-19
 
 Preprint release.

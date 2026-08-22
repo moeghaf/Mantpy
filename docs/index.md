@@ -27,7 +27,8 @@ tutorials/advanced
 
 ## Reproducing the paper
 
-The full worked analyses behind the manuscript — with their real datasets,
+The full worked analyses behind the
+[preprint](https://doi.org/10.1101/2025.06.04.657781) — with their real datasets,
 figures and source data — are maintained in the
 [Mantpy reproducibility repository](https://github.com/moeghaf/mantpy_reproducibility);
 the intestine and lung workflows run end to end on Colab.

@@ -1,7 +1,8 @@
 # Advanced: the full analyses
 
 The tutorials in this section run on a synthetic ROI so they execute in
-seconds. The analyses behind the Mantpy paper run on real cohorts, take
+seconds. The analyses behind the
+[Mantpy preprint](https://doi.org/10.1101/2025.06.04.657781) run on real cohorts, take
 minutes to hours, and download hundreds of megabytes — so they live in the
 [reproducibility repository](https://github.com/moeghaf/mantpy_reproducibility)
 rather than here; the intestine and lung workflows open directly in Colab.
@@ -67,4 +68,3 @@ MANTPY_TUTORIAL_MODE=fast   # or full
 If you are new to Mantpy, the mouse lung workflow is the most direct
 continuation of these tutorials — it is the cell–ECM graph you have already
 built, applied to a real cohort.
-

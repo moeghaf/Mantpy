@@ -12,9 +12,6 @@ version: 1.0.0
 date-released: "2026-08-19"
 identifiers:
   - type: doi
-    value: 10.1101/2025.06.04.657781
-    description: "bioRxiv preprint describing Mantpy"
-  - type: doi
     value: 10.5281/zenodo.21538382
     description: "ECM-inclusive datasets archive"
 preferred-citation:
@@ -45,5 +42,4 @@ preferred-citation:
   year: 2026
   month: 8
   doi: 10.1101/2025.06.04.657781
-  url: "https://doi.org/10.1101/2025.06.04.657781"
   notes: "Preprint (version 4, posted 2026-08-19)."

@@ -33,4 +33,10 @@ jobs:
         # v1.14.1 bundles twine 6.1.0, which rejects the `Metadata-Version: 2.5`
         # that hatchling >=1.30 emits — that is what failed the v1.0.0 publish.
         # PyPI itself accepts 2.5; v1.14.2 bundles twine 7.0.0.
-        uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26 # v1.14.2
+        #
+        # Pin by tag, not by commit SHA: the action runs a prebuilt image named
+        # after `github.action_ref` verbatim (create-docker-action.py), and
+        # ghcr.io only publishes images for tags (v1.14.2, release-v1, ...).
+        # A SHA pin therefore fails with `manifest unknown` — that is what
+        # failed the v1.0.1 publish.
+        uses: pypa/gh-action-pypi-publish@v1.14.2 # zizmor: ignore[unpinned-uses]

@@ -30,11 +30,17 @@ from mantpy._constants import (
 from mantpy._core._edges import (
     build_cell_nx_graph,
     build_ecm_nx_graph,
+    containing_ring_edges,
     delaunay_edges,
+    delaunay_edges_bipartite,
     grid_edges,
     knn_edges,
+    knn_edges_bipartite,
+    knn_edges_bipartite_kdtree,
+    knn_edges_kdtree,
     merge_cell_ecm_graphs,
     radius_edges,
+    radius_edges_bipartite,
 )
 from mantpy._utils import log_params as _log_params
 
@@ -279,7 +285,8 @@ def build_patch_graph(
         ``uns['image_ecm_patches']['patch_foreground']`` supply continuity
         pruning when explicit values are not passed.
     k
-        Number of nearest neighbours.
+        Number of other nearest neighbours selected per patch, with ``1 <= k < n_patches``.
+        Distinct coincident patches remain neighbours; the undirected union can have degree above k.
     pixel_coords
         ``(ys, xs)`` integer pixel coordinates of each patch (each shape ``(n_patches,)``),
         indexing into ``foreground``. Required when ``foreground`` is given.
@@ -336,9 +343,10 @@ def build_patch_graph(
     n = pts.shape[0]
     if not 1 <= k < n:
         raise ValueError(f"k={k!r}: expected 1 <= k < n_patches ({n}).")
-    idx = NearestNeighbors(n_neighbors=k + 1).fit(pts).kneighbors(pts, return_distance=False)
+    # Keep the fitted k+1 heuristic; the training-set query excludes self by identity.
+    idx = NearestNeighbors(n_neighbors=k + 1).fit(pts).kneighbors(n_neighbors=k, return_distance=False)
     r = np.repeat(np.arange(n), k)
-    c = idx[:, 1 : k + 1].ravel()
+    c = idx.ravel()
     # A kNN relation is directed: a high-index node may select a low-index
     # neighbour even when the reverse selection is absent. Canonicalise every
     # candidate pair before deduplicating so symmetrisation is invariant to
@@ -422,6 +430,79 @@ def _require_dmax_knn_only(edge_method: str, dmax: float | None, name: str) -> N
             f"got edge_method={edge_method!r}. The delaunay, grid and radius "
             f"topologies do not take a distance cap — leave {name}=None (the default)."
         )
+
+
+_KNN_BACKENDS = ("sklearn", "scipy")
+_CELL_ECM_EDGE_METHODS = ("knn", "delaunay", "radius", "containing_ring")
+
+
+def _require_positive_finite(value: Any, name: str) -> None:
+    """Guard: ``value`` is a positive, finite number (not a bool)."""
+    try:
+        ok = not isinstance(value, bool) and bool(np.isfinite(float(value))) and float(value) > 0
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        raise ValueError(f"{name} must be a positive, finite number, got {value!r}.")
+
+
+def _require_knn_backend(edge_method: str, knn_backend: str, name: str = "knn_backend") -> None:
+    """Guard: a known kNN backend, set away from the default only for ``edge_method='knn'``."""
+    if knn_backend not in _KNN_BACKENDS:
+        raise ValueError(f"{name}={knn_backend!r}: expected 'sklearn' (the default) or 'scipy'.")
+    if knn_backend != "sklearn" and edge_method != "knn":
+        raise ValueError(
+            f"{name}={knn_backend!r} only applies to edge_method='knn', got edge_method={edge_method!r}. "
+            f"Leave {name}='sklearn' (the default)."
+        )
+
+
+def _require_delaunay_option(edge_method: str, value: float | None, name: str) -> None:
+    """Guard for the opt-in Delaunay length cap and tie-break jitter.
+
+    Same policy as :func:`_require_dmax_knn_only`: a non-``None`` value with a
+    method that does not use it is a user error rather than a silently ignored
+    argument.
+    """
+    if value is None:
+        return
+    if edge_method != "delaunay":
+        raise ValueError(
+            f"{name}={value!r} only applies to edge_method='delaunay', got edge_method={edge_method!r}. "
+            f"Leave {name}=None (the default)."
+        )
+    _require_positive_finite(value, name)
+
+
+def _require_delaunay_seed(seed: Any, jitter: float | None, name: str = "delaunay_seed") -> None:
+    """Guard: a non-negative integer seed, set away from 0 only together with a jitter."""
+    if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)) or seed < 0:
+        raise ValueError(f"{name} must be a non-negative integer, got {seed!r}.")
+    if seed != 0 and jitter is None:
+        raise ValueError(f"{name}={seed!r} only applies together with delaunay_jitter; leave {name}=0 (the default).")
+
+
+def _edge_option_log(
+    *,
+    knn_backend: str = "sklearn",
+    delaunay_max_length: float | None = None,
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
+) -> dict[str, Any]:
+    """The opt-in edge options that differ from their defaults (provenance and recipes).
+
+    Defaults are omitted so that logs and ``rebuild_kwargs`` of calls that do
+    not use the options stay exactly as before.
+    """
+    out: dict[str, Any] = {}
+    if knn_backend != "sklearn":
+        out["knn_backend"] = knn_backend
+    if delaunay_max_length is not None:
+        out["delaunay_max_length"] = float(delaunay_max_length)
+    if delaunay_jitter is not None:
+        out["delaunay_jitter"] = float(delaunay_jitter)
+        out["delaunay_seed"] = int(delaunay_seed)
+    return out
 
 
 def build_graph(
@@ -512,6 +593,10 @@ def build_cell_graph(
     k: int = 5,
     r: float | None = None,
     edge_method: Literal["knn", "delaunay", "radius"] = "knn",
+    knn_backend: Literal["sklearn", "scipy"] = "sklearn",
+    delaunay_max_length: float | None = None,
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
     edge_weight: EdgeWeight = "inv_distance",
     edge_features: list[str | Callable] | None = None,
     node_features: list[str] | None = None,
@@ -543,6 +628,27 @@ def build_cell_graph(
         Radius threshold (used when ``edge_method='radius'``).
     edge_method
         ``"knn"`` / ``"delaunay"`` / ``"radius"``.
+    knn_backend
+        Neighbour search for ``edge_method='knn'``: ``"sklearn"`` (default,
+        scikit-learn ball tree) or ``"scipy"`` (:class:`scipy.spatial.cKDTree`).
+        Both return the same neighbours unless candidates are tied at the k-th
+        distance (e.g. points on a regular lattice); each search then keeps the
+        tied candidates it reaches first. Use ``"scipy"`` to reproduce graphs
+        built with ``cKDTree.query``.
+    delaunay_max_length
+        Optional cap on Delaunay edge length (pixels) for
+        ``edge_method='delaunay'``: longer triangulation edges are dropped and
+        an edge of exactly this length is kept. ``None`` (default) keeps every
+        triangulation edge. (The ``Dmax`` caps remain kNN-only.)
+    delaunay_jitter
+        Optional standard deviation (pixels) of a seeded Gaussian perturbation
+        applied to a copy of the points before triangulating, so co-circular
+        points (such as a regular patch lattice) are triangulated reproducibly.
+        Edge lengths and ``delaunay_max_length`` use the unperturbed points.
+        ``edge_method='delaunay'`` only; ``None`` (default) triangulates the
+        points as given.
+    delaunay_seed
+        Seed of :func:`numpy.random.default_rng` for ``delaunay_jitter``.
     edge_weight
         How to weight edges.  One of ``"inv_distance"`` (default), ``"distance"``,
         ``"uniform"``, or a callable ``(i, j, distance) -> float``.
@@ -576,6 +682,10 @@ def build_cell_graph(
         raise ValueError(f"Key '{SPATIAL_KEY}' not found in adata.obsm. Run `mt.read_imc(...)` first.")
     if connectivity_key is None:
         _require_dmax_knn_only(edge_method, Dmax_CC, "Dmax_CC")
+        _require_knn_backend(edge_method, knn_backend)
+        _require_delaunay_option(edge_method, delaunay_max_length, "delaunay_max_length")
+        _require_delaunay_option(edge_method, delaunay_jitter, "delaunay_jitter")
+        _require_delaunay_seed(delaunay_seed, delaunay_jitter)
 
     if not inplace:
         adata = adata.copy()
@@ -585,7 +695,17 @@ def build_cell_graph(
     cell_types = _ct_default.values if _ct_default is not None else np.full(len(adata), "unknown")
 
     if connectivity_key is None:
-        edges = _build_edges(coords, edge_method, k=k, Dmax=Dmax_CC, r=r)
+        edges = _build_edges(
+            coords,
+            edge_method,
+            k=k,
+            Dmax=Dmax_CC,
+            r=r,
+            knn_backend=knn_backend,
+            delaunay_max_length=delaunay_max_length,
+            delaunay_jitter=delaunay_jitter,
+            delaunay_seed=delaunay_seed,
+        )
     else:
         edges = _edges_from_obsp(adata, connectivity_key, coords)
 
@@ -634,6 +754,16 @@ def build_cell_graph(
                 if edge_features
                 else None,
                 "n_edges": len(edges),
+                **(
+                    _edge_option_log(
+                        knn_backend=knn_backend,
+                        delaunay_max_length=delaunay_max_length,
+                        delaunay_jitter=delaunay_jitter,
+                        delaunay_seed=delaunay_seed,
+                    )
+                    if connectivity_key is None
+                    else {}
+                ),
             }
         },
     )
@@ -651,6 +781,10 @@ def build_ecm_graph(
     Dmax: float | None = None,
     edge_method: Literal["knn", "delaunay", "radius", "grid"] = "knn",
     grid_connectivity: int = 8,
+    knn_backend: Literal["sklearn", "scipy"] = "sklearn",
+    delaunay_max_length: float | None = None,
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
     edge_weight: EdgeWeight = "inv_distance",
     edge_features: list[str | Callable] | None = None,
     key_added: str = ECM_GRAPH_KEY,
@@ -680,6 +814,27 @@ def build_ecm_graph(
     grid_connectivity
         Lattice stencil when ``edge_method='grid'``: ``8`` (Moore — orthogonal +
         diagonal, default) or ``4`` (von Neumann — orthogonal only).
+    knn_backend
+        Neighbour search for ``edge_method='knn'``: ``"sklearn"`` (default,
+        scikit-learn ball tree) or ``"scipy"`` (:class:`scipy.spatial.cKDTree`).
+        Both return the same neighbours unless candidates are tied at the k-th
+        distance (e.g. points on a regular lattice); each search then keeps the
+        tied candidates it reaches first. Use ``"scipy"`` to reproduce graphs
+        built with ``cKDTree.query``.
+    delaunay_max_length
+        Optional cap on Delaunay edge length (pixels) for
+        ``edge_method='delaunay'``: longer triangulation edges are dropped and
+        an edge of exactly this length is kept. ``None`` (default) keeps every
+        triangulation edge. (The ``Dmax`` caps remain kNN-only.)
+    delaunay_jitter
+        Optional standard deviation (pixels) of a seeded Gaussian perturbation
+        applied to a copy of the points before triangulating, so co-circular
+        points (such as a regular patch lattice) are triangulated reproducibly.
+        Edge lengths and ``delaunay_max_length`` use the unperturbed points.
+        ``edge_method='delaunay'`` only; ``None`` (default) triangulates the
+        points as given.
+    delaunay_seed
+        Seed of :func:`numpy.random.default_rng` for ``delaunay_jitter``.
     edge_weight
         How to weight edges.  One of ``"inv_distance"``, ``"distance"``,
         ``"uniform"``, or a callable ``(i, j, distance) -> float``.
@@ -710,6 +865,10 @@ def build_ecm_graph(
             f"Key '{ECM_PATCHES_KEY}' not found in adata.uns. Run `mt.pp.extract_ecm_patches(adata, img)` first."
         )
     _require_dmax_knn_only(edge_method, Dmax, "Dmax")
+    _require_knn_backend(edge_method, knn_backend)
+    _require_delaunay_option(edge_method, delaunay_max_length, "delaunay_max_length")
+    _require_delaunay_option(edge_method, delaunay_jitter, "delaunay_jitter")
+    _require_delaunay_seed(delaunay_seed, delaunay_jitter)
 
     if not inplace:
         adata = adata.copy()
@@ -717,7 +876,18 @@ def build_ecm_graph(
     patch_df = adata.uns[ECM_PATCHES_KEY]
     coords = patch_df[["x", "y"]].values.astype(float)
 
-    edges = _build_edges(coords, edge_method, k=k, Dmax=Dmax, r=r, grid_connectivity=grid_connectivity)
+    edges = _build_edges(
+        coords,
+        edge_method,
+        k=k,
+        Dmax=Dmax,
+        r=r,
+        grid_connectivity=grid_connectivity,
+        knn_backend=knn_backend,
+        delaunay_max_length=delaunay_max_length,
+        delaunay_jitter=delaunay_jitter,
+        delaunay_seed=delaunay_seed,
+    )
 
     weight_fn = lambda i, j, d: _compute_weight(edge_weight, i, j, d)
     edge_feat_fn = (
@@ -740,6 +910,12 @@ def build_ecm_graph(
                 else None,
                 "n_ecm_nodes": len(patch_df),
                 "n_edges": len(edges),
+                **_edge_option_log(
+                    knn_backend=knn_backend,
+                    delaunay_max_length=delaunay_max_length,
+                    delaunay_jitter=delaunay_jitter,
+                    delaunay_seed=delaunay_seed,
+                ),
             }
         },
     )
@@ -789,13 +965,26 @@ def build_ecm_graphs(
     Dmax: float | None = None,
     edge_method: Literal["knn", "delaunay", "radius", "grid"] = "knn",
     grid_connectivity: int = 8,
+    knn_backend: Literal["sklearn", "scipy"] = "sklearn",
+    delaunay_max_length: float | None = None,
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
     edge_weight: EdgeWeight = "inv_distance",
     edge_features: list[str | Callable] | None = None,
     key_added: str = ECM_GRAPH_KEY,
 ) -> ECMGraphBuildResult:
-    """Build the same ECM--ECM graph for every sample in a cohort."""
+    """Build the same ECM--ECM graph for every sample in a cohort.
+
+    Parameters are those of :func:`build_ecm_graph`. ``rebuild_kwargs`` of the
+    result is the recipe; the opt-in ``knn_backend`` and ``delaunay_*``
+    options appear in it only when set.
+    """
     if not adatas:
         raise ValueError("adatas is empty; expected at least one ECM sample.")
+    _require_knn_backend(edge_method, knn_backend)
+    _require_delaunay_option(edge_method, delaunay_max_length, "delaunay_max_length")
+    _require_delaunay_option(edge_method, delaunay_jitter, "delaunay_jitter")
+    _require_delaunay_seed(delaunay_seed, delaunay_jitter)
     recipe: dict[str, Any] = {
         "k": k,
         "r": r,
@@ -806,6 +995,14 @@ def build_ecm_graphs(
         "edge_features": edge_features,
         "key_added": key_added,
     }
+    recipe.update(
+        _edge_option_log(
+            knn_backend=knn_backend,
+            delaunay_max_length=delaunay_max_length,
+            delaunay_jitter=delaunay_jitter,
+            delaunay_seed=delaunay_seed,
+        )
+    )
     samples: list[str] = []
     node_counts: list[int] = []
     edge_counts: list[int] = []
@@ -826,9 +1023,15 @@ def build_ecm_graphs(
 def build_cell_ecm_graph(
     adata: AnnData,
     *,
-    edge_method: Literal["knn", "delaunay"] = "delaunay",
+    edge_method: Literal["knn", "delaunay", "radius", "containing_ring"] = "delaunay",
     Dmax_CE: float | None = None,
     k: int = 5,
+    r: float | None = None,
+    patch_size: float | None = None,
+    knn_backend: Literal["sklearn", "scipy"] = "sklearn",
+    delaunay_max_length: float | None = None,
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
     edge_weight: EdgeWeight = "inv_distance",
     edge_features: list[str | Callable] | None = None,
     key_added: str = CELL_ECM_GRAPH_KEY,
@@ -856,6 +1059,14 @@ def build_cell_ecm_graph(
           boundary. Parameter-free; adapts to local density.
         - ``"knn"`` — K nearest ECM patches per cell, with optional
           distance cap ``Dmax_CE``.
+        - ``"radius"`` — every ECM patch whose centre lies within ``r`` of
+          the cell (a patch at exactly ``r`` is included).
+        - ``"containing_ring"`` — the patch that contains the cell and that
+          patch's eight lattice neighbours (a 3 x 3 block; at most nine edges
+          per cell). Needs patches on Mantpy's extraction lattice (centres at
+          ``(index + 0.5) * patch_size``); patches absent from
+          ``adata.uns['ecm_patches']``, such as removed background, are
+          skipped.
     Dmax_CE
         Maximum cell-ECM distance for cross edges (pixels).
         ``None`` = no pruning (default).  **Only applies to**
@@ -865,6 +1076,33 @@ def build_cell_ecm_graph(
     k
         Maximum number of ECM neighbours per cell for cross edges.
         Only used when ``edge_method="knn"``.
+    r
+        Radius (pixels) for ``edge_method="radius"``.
+    patch_size
+        Patch side (pixels) for ``edge_method="containing_ring"``. ``None``
+        (default) infers it as the median nearest-neighbour spacing of the
+        patch centres (the lattice step); pass it when patches are sparse.
+    knn_backend
+        Neighbour search for ``edge_method='knn'``: ``"sklearn"`` (default,
+        scikit-learn ball tree) or ``"scipy"`` (:class:`scipy.spatial.cKDTree`).
+        Both return the same neighbours unless candidates are tied at the k-th
+        distance (e.g. points on a regular lattice); each search then keeps the
+        tied candidates it reaches first. Use ``"scipy"`` to reproduce graphs
+        built with ``cKDTree.query``.
+    delaunay_max_length
+        Optional cap on Delaunay edge length (pixels) for
+        ``edge_method='delaunay'``: longer triangulation edges are dropped and
+        an edge of exactly this length is kept. ``None`` (default) keeps every
+        triangulation edge. (The ``Dmax`` caps remain kNN-only.)
+    delaunay_jitter
+        Optional standard deviation (pixels) of a seeded Gaussian perturbation
+        applied to a copy of the points before triangulating, so co-circular
+        points (such as a regular patch lattice) are triangulated reproducibly.
+        Edge lengths and ``delaunay_max_length`` use the unperturbed points.
+        ``edge_method='delaunay'`` only; ``None`` (default) triangulates the
+        points as given.
+    delaunay_seed
+        Seed of :func:`numpy.random.default_rng` for ``delaunay_jitter``.
     edge_weight
         How to weight cross edges.
     edge_features
@@ -889,6 +1127,12 @@ def build_cell_ecm_graph(
     - If ``inplace=False``: returns a copy of ``adata`` with the above field populated.
     """
     _require_dmax_knn_only(edge_method, Dmax_CE, "Dmax_CE")
+    _require_knn_backend(edge_method, knn_backend)
+    _require_delaunay_option(edge_method, delaunay_max_length, "delaunay_max_length")
+    _require_delaunay_option(edge_method, delaunay_jitter, "delaunay_jitter")
+    _require_delaunay_seed(delaunay_seed, delaunay_jitter)
+    if patch_size is not None:
+        _require_positive_finite(patch_size, "patch_size")
 
     cell_graph_key = CELL_GRAPH_KEY + "_nx"
     has_cell = cell_graph_key in adata.uns
@@ -925,6 +1169,35 @@ def build_cell_ecm_graph(
                 parts = [f(pos_i, pos_j, d) for f in _fns]
                 return np.concatenate(parts).astype(np.float32)
 
+        cross_edges = None
+        if len(cell_coords) and len(ecm_coords):
+            if edge_method not in _CELL_ECM_EDGE_METHODS:
+                raise ValueError(
+                    f"edge_method must be 'knn', 'delaunay', 'radius' or 'containing_ring', got {edge_method!r}"
+                )
+            if edge_method == "containing_ring":
+                patch_size = _lattice_patch_size(ecm_coords, patch_size)
+            # The opt-in rules and options are computed here; the default kNN and
+            # Delaunay cross edges are still built inside merge_cell_ecm_graphs.
+            if (
+                edge_method in ("radius", "containing_ring")
+                or knn_backend != "sklearn"
+                or delaunay_max_length is not None
+                or delaunay_jitter is not None
+            ):
+                cross_edges = _cell_ecm_cross_edges(
+                    cell_coords,
+                    ecm_coords,
+                    edge_method,
+                    k=k,
+                    Dmax=Dmax_CE,
+                    r=r,
+                    patch_size=patch_size,
+                    knn_backend=knn_backend,
+                    delaunay_max_length=delaunay_max_length,
+                    delaunay_jitter=delaunay_jitter,
+                    delaunay_seed=delaunay_seed,
+                )
         G = merge_cell_ecm_graphs(
             cell_graph,
             ecm_graph,
@@ -935,6 +1208,7 @@ def build_cell_ecm_graph(
             weight_fn=weight_fn,
             edge_feat_fn=cross_edge_feat_fn,
             edge_method=edge_method,
+            cross_edges=cross_edges,
         )
         mode = "cell+ecm"
     elif has_ecm:
@@ -975,6 +1249,18 @@ def build_cell_ecm_graph(
                 "n_cell_nodes": n_cell_nodes,
                 "n_ecm_nodes": n_ecm_nodes,
                 "n_cell_ecm_edges": n_ce_edges,
+                **({"r": float(r)} if edge_method == "radius" and r is not None else {}),
+                **(
+                    {"patch_size": float(patch_size)}
+                    if edge_method == "containing_ring" and patch_size is not None
+                    else {}
+                ),
+                **_edge_option_log(
+                    knn_backend=knn_backend,
+                    delaunay_max_length=delaunay_max_length,
+                    delaunay_jitter=delaunay_jitter,
+                    delaunay_seed=delaunay_seed,
+                ),
             }
         },
     )
@@ -991,13 +1277,23 @@ def ensure_cell_ecm_graph(
     cell_Dmax: float | None = None,
     cell_edge_method: Literal["knn", "delaunay", "radius"] = "knn",
     cell_connectivity_key: str | None = None,
+    cell_r: float | None = None,
+    cell_delaunay_max_length: float | None = None,
     ecm_k: int = 5,
     ecm_Dmax: float | None = None,
     ecm_edge_method: Literal["knn", "delaunay", "radius", "grid"] = "knn",
     ecm_grid_connectivity: int = 8,
+    ecm_r: float | None = None,
+    ecm_delaunay_max_length: float | None = None,
     cell_ecm_k: int = 5,
     cell_ecm_Dmax: float | None = None,
-    cell_ecm_edge_method: Literal["knn", "delaunay"] = "knn",
+    cell_ecm_edge_method: Literal["knn", "delaunay", "radius", "containing_ring"] = "knn",
+    cell_ecm_r: float | None = None,
+    cell_ecm_patch_size: float | None = None,
+    cell_ecm_delaunay_max_length: float | None = None,
+    knn_backend: Literal["sklearn", "scipy"] = "sklearn",
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
     rebuild: bool = True,
     edge_features: list[str | Callable] | None = None,
 ) -> None:
@@ -1030,6 +1326,21 @@ def ensure_cell_ecm_graph(
     cell_ecm_k, cell_ecm_Dmax, cell_ecm_edge_method
         Forwarded to :func:`build_cell_ecm_graph` (``k``, ``Dmax_CE``,
         ``edge_method``).
+    cell_r, ecm_r, cell_ecm_r
+        Radii (pixels) of ``edge_method='radius'`` layers, forwarded as ``r``.
+    cell_delaunay_max_length, ecm_delaunay_max_length, cell_ecm_delaunay_max_length
+        Opt-in Delaunay length caps of each layer, forwarded as
+        ``delaunay_max_length``.
+    cell_ecm_patch_size
+        Forwarded to :func:`build_cell_ecm_graph` as ``patch_size``
+        (``cell_ecm_edge_method='containing_ring'``).
+    knn_backend
+        Neighbour search of every kNN layer Mantpy builds: ``"sklearn"``
+        (default) or ``"scipy"``; see :func:`build_cell_graph`.
+    delaunay_jitter, delaunay_seed
+        Tie-break jitter of every Delaunay layer Mantpy builds, each drawn from
+        a fresh ``numpy.random.default_rng(delaunay_seed)``; see
+        :func:`build_cell_graph`.
     rebuild
         When ``True`` (default), drops any pre-existing graphs first so
         the rebuild is guaranteed fresh. When ``False``, only builds the
@@ -1050,6 +1361,7 @@ def ensure_cell_ecm_graph(
     -----
     Each ``*_Dmax`` distance cap is a **kNN-only** knob; the parameter-free
     Delaunay and grid topologies reject a non-``None`` cap with ``ValueError``.
+    Delaunay layers take the separate, opt-in ``*_delaunay_max_length`` caps.
 
     Examples
     --------
@@ -1077,6 +1389,29 @@ def ensure_cell_ecm_graph(
     _require_dmax_knn_only(cell_edge_method, cell_Dmax, "cell_Dmax")
     _require_dmax_knn_only(ecm_edge_method, ecm_Dmax, "ecm_Dmax")
     _require_dmax_knn_only(cell_ecm_edge_method, cell_ecm_Dmax, "cell_ecm_Dmax")
+    _require_layer_options(
+        cell_edge_method=cell_edge_method,
+        ecm_edge_method=ecm_edge_method,
+        cell_ecm_edge_method=cell_ecm_edge_method,
+        cell_built=cell_connectivity_key is None,
+        cell_delaunay_max_length=cell_delaunay_max_length,
+        ecm_delaunay_max_length=ecm_delaunay_max_length,
+        cell_ecm_delaunay_max_length=cell_ecm_delaunay_max_length,
+        cell_ecm_patch_size=cell_ecm_patch_size,
+        knn_backend=knn_backend,
+        delaunay_jitter=delaunay_jitter,
+        delaunay_seed=delaunay_seed,
+    )
+
+    def _shared(method: str, built: bool = True) -> dict[str, Any]:
+        """The shared opt-in options, passed only to layers that use them."""
+        if not built:
+            return {}
+        return {
+            "knn_backend": knn_backend if method == "knn" else "sklearn",
+            "delaunay_jitter": delaunay_jitter if method == "delaunay" else None,
+            "delaunay_seed": delaunay_seed if method == "delaunay" and delaunay_jitter is not None else 0,
+        }
 
     if rebuild:
         # Pop only the keys we know our own builders own. Leaves any
@@ -1096,7 +1431,10 @@ def ensure_cell_ecm_graph(
             adata,
             k=cell_k,
             Dmax_CC=cell_Dmax,
+            r=cell_r,
             edge_method=cell_edge_method,
+            delaunay_max_length=cell_delaunay_max_length if cell_connectivity_key is None else None,
+            **_shared(cell_edge_method, built=cell_connectivity_key is None),
             edge_features=edge_features,
             connectivity_key=cell_connectivity_key,
         )
@@ -1105,8 +1443,11 @@ def ensure_cell_ecm_graph(
             adata,
             k=ecm_k,
             Dmax=ecm_Dmax,
+            r=ecm_r,
             edge_method=ecm_edge_method,
             grid_connectivity=ecm_grid_connectivity,
+            delaunay_max_length=ecm_delaunay_max_length,
+            **_shared(ecm_edge_method),
             edge_features=edge_features,
         )
     if not has_ce:
@@ -1114,7 +1455,11 @@ def ensure_cell_ecm_graph(
             adata,
             k=cell_ecm_k,
             Dmax_CE=cell_ecm_Dmax,
+            r=cell_ecm_r,
+            patch_size=cell_ecm_patch_size,
             edge_method=cell_ecm_edge_method,
+            delaunay_max_length=cell_ecm_delaunay_max_length,
+            **_shared(cell_ecm_edge_method),
             edge_features=edge_features,
         )
 
@@ -1151,14 +1496,23 @@ def build_cell_ecm_graphs(
     cell_radius: float | tuple[float, float] | None = None,
     cell_Dmax: float | None = None,
     cell_edge_method: Literal["knn", "delaunay", "radius"] = "knn",
+    cell_delaunay_max_length: float | None = None,
     squidpy_kwargs: Mapping[str, Any] | None = None,
     ecm_k: int = 5,
     ecm_Dmax: float | None = None,
     ecm_edge_method: Literal["knn", "delaunay", "radius", "grid"] = "knn",
     ecm_grid_connectivity: int = 8,
+    ecm_r: float | None = None,
+    ecm_delaunay_max_length: float | None = None,
     cell_ecm_k: int = 5,
     cell_ecm_Dmax: float | None = None,
-    cell_ecm_edge_method: Literal["knn", "delaunay"] = "knn",
+    cell_ecm_edge_method: Literal["knn", "delaunay", "radius", "containing_ring"] = "knn",
+    cell_ecm_r: float | None = None,
+    cell_ecm_patch_size: float | None = None,
+    cell_ecm_delaunay_max_length: float | None = None,
+    knn_backend: Literal["sklearn", "scipy"] = "sklearn",
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
     edge_features: list[str | Callable] | None = None,
     suppress_squidpy_logs: bool = True,
 ) -> GraphBuildResult:
@@ -1175,6 +1529,16 @@ def build_cell_ecm_graphs(
     optional ``cell_radius`` directly. No post-hoc adjacency pruning occurs.
     ``suppress_squidpy_logs=True`` hides Squidpy's one INFO line per sample
     while preserving warnings and errors.
+
+    With ``cell_graph='mantpy'`` and ``cell_edge_method='radius'``,
+    ``cell_radius`` is the radius of Mantpy's cell--cell graph (a number, or
+    ``(0, r)``) and is recorded as ``cell_r`` in ``rebuild_kwargs``. The
+    opt-in options ``cell_delaunay_max_length`` (Mantpy cell graphs only),
+    ``ecm_r``, ``ecm_delaunay_max_length``, ``cell_ecm_r``,
+    ``cell_ecm_patch_size``, ``cell_ecm_delaunay_max_length``,
+    ``knn_backend``, ``delaunay_jitter`` and ``delaunay_seed`` are forwarded
+    to :func:`ensure_cell_ecm_graph` and appear in ``rebuild_kwargs`` only
+    when set.
 
     Returns
     -------
@@ -1197,13 +1561,36 @@ def build_cell_ecm_graphs(
         raise ValueError("adatas is empty; expected at least one sample.")
     if cell_graph not in {"squidpy", "mantpy"}:
         raise ValueError(f"cell_graph={cell_graph!r}; expected 'squidpy' or 'mantpy'.")
-    if cell_graph == "mantpy" and cell_radius is not None:
-        raise ValueError("cell_radius is a Squidpy setting; leave it None with cell_graph='mantpy'.")
+    if cell_graph == "mantpy" and cell_radius is not None and cell_edge_method != "radius":
+        raise ValueError(
+            "cell_radius is a Squidpy setting, or the radius of cell_edge_method='radius' with "
+            f"cell_graph='mantpy'; leave it None with cell_graph='mantpy' and cell_edge_method={cell_edge_method!r}."
+        )
     if cell_graph == "squidpy" and cell_Dmax is not None:
         raise ValueError(
             "cell_Dmax is a Mantpy kNN setting. With Squidpy, pass cell_radius "
             "so the radius is applied by squidpy.gr.spatial_neighbors."
         )
+    if cell_graph == "squidpy" and cell_delaunay_max_length is not None:
+        raise ValueError(
+            "cell_delaunay_max_length is a Mantpy Delaunay setting and does not apply to a Squidpy "
+            "cell graph; use cell_graph='mantpy' with cell_edge_method='delaunay'."
+        )
+    mantpy_cell_r = _mantpy_cell_radius(cell_radius) if cell_graph == "mantpy" and cell_radius is not None else None
+    # Validate the opt-in options before Squidpy touches any sample.
+    _require_layer_options(
+        cell_edge_method=cell_edge_method,
+        ecm_edge_method=ecm_edge_method,
+        cell_ecm_edge_method=cell_ecm_edge_method,
+        cell_built=cell_graph == "mantpy",
+        cell_delaunay_max_length=cell_delaunay_max_length,
+        ecm_delaunay_max_length=ecm_delaunay_max_length,
+        cell_ecm_delaunay_max_length=cell_ecm_delaunay_max_length,
+        cell_ecm_patch_size=cell_ecm_patch_size,
+        knn_backend=knn_backend,
+        delaunay_jitter=delaunay_jitter,
+        delaunay_seed=delaunay_seed,
+    )
 
     recipe: dict[str, Any] = {
         "cell_k": cell_k,
@@ -1218,6 +1605,21 @@ def build_cell_ecm_graphs(
         "cell_ecm_edge_method": cell_ecm_edge_method,
         "edge_features": edge_features,
     }
+    optional = {
+        "cell_r": mantpy_cell_r,
+        "cell_delaunay_max_length": cell_delaunay_max_length,
+        "ecm_r": ecm_r,
+        "ecm_delaunay_max_length": ecm_delaunay_max_length,
+        "cell_ecm_r": cell_ecm_r,
+        "cell_ecm_patch_size": cell_ecm_patch_size,
+        "cell_ecm_delaunay_max_length": cell_ecm_delaunay_max_length,
+        "delaunay_jitter": delaunay_jitter,
+    }
+    recipe.update({key: value for key, value in optional.items() if value is not None})
+    if knn_backend != "sklearn":
+        recipe["knn_backend"] = knn_backend
+    if delaunay_jitter is not None or delaunay_seed != 0:
+        recipe["delaunay_seed"] = delaunay_seed
 
     if cell_graph == "squidpy":
         import squidpy as sq
@@ -1994,8 +2396,7 @@ def to_pyg(
         labels = pd.unique(adata.obs[label_key])
         if len(labels) != 1:
             raise ValueError(
-                f"obs[{label_key!r}] must hold a single per-graph label; "
-                f"found {len(labels)} distinct values."
+                f"obs[{label_key!r}] must hold a single per-graph label; found {len(labels)} distinct values."
             )
         data.y = torch.tensor(int(labels[0]), dtype=torch.long)
     elif "label" in adata.uns:
@@ -2237,13 +2638,20 @@ def _build_edges(
     Dmax: float | None = None,
     r: float | None = None,
     grid_connectivity: int = 8,
+    knn_backend: str = "sklearn",
+    delaunay_max_length: float | None = None,
+    delaunay_jitter: float | None = None,
+    delaunay_seed: int = 0,
 ):
     if method == "knn":
+        if knn_backend == "scipy":
+            return knn_edges_kdtree(coords, k=k, Dmax=Dmax)
         return knn_edges(coords, k=k, Dmax=Dmax)
     if method == "delaunay":
-        # Parameter-free: Delaunay topology has no distance cap (Dmax is
-        # knn-only and is validated away before reaching here).
-        return delaunay_edges(coords)
+        # Parameter-free by default: Dmax is knn-only and is validated away
+        # before reaching here. The opt-in delaunay_max_length caps edge length
+        # and delaunay_jitter breaks co-circular ties.
+        return delaunay_edges(coords, Dmax=delaunay_max_length, jitter=delaunay_jitter, seed=delaunay_seed)
     if method == "radius":
         if r is None:
             raise ValueError("edge_method='radius' requires the `r` parameter.")
@@ -2252,6 +2660,118 @@ def _build_edges(
         # Parameter-free lattice stencil for regular ECM patch grids.
         return grid_edges(coords, connectivity=grid_connectivity)
     raise ValueError(f"Unknown edge_method '{method}'. Choose 'knn', 'delaunay', 'radius', or 'grid'.")
+
+
+def _require_layer_options(
+    *,
+    cell_edge_method: str,
+    ecm_edge_method: str,
+    cell_ecm_edge_method: str,
+    cell_built: bool,
+    cell_delaunay_max_length: float | None,
+    ecm_delaunay_max_length: float | None,
+    cell_ecm_delaunay_max_length: float | None,
+    cell_ecm_patch_size: float | None,
+    knn_backend: str,
+    delaunay_jitter: float | None,
+    delaunay_seed: Any,
+) -> None:
+    """Validate the opt-in options of :func:`ensure_cell_ecm_graph` and the cohort builder.
+
+    Per-layer caps must match their layer's method; the shared ``knn_backend``
+    and ``delaunay_jitter`` must apply to at least one layer that Mantpy builds
+    (an adopted cell graph does not count).
+    """
+    _require_delaunay_option(cell_edge_method, cell_delaunay_max_length, "cell_delaunay_max_length")
+    _require_delaunay_option(ecm_edge_method, ecm_delaunay_max_length, "ecm_delaunay_max_length")
+    _require_delaunay_option(cell_ecm_edge_method, cell_ecm_delaunay_max_length, "cell_ecm_delaunay_max_length")
+    if cell_ecm_patch_size is not None:
+        _require_positive_finite(cell_ecm_patch_size, "cell_ecm_patch_size")
+    built = [ecm_edge_method, cell_ecm_edge_method] + ([cell_edge_method] if cell_built else [])
+    if knn_backend not in _KNN_BACKENDS:
+        raise ValueError(f"knn_backend={knn_backend!r}: expected 'sklearn' (the default) or 'scipy'.")
+    if knn_backend != "sklearn" and "knn" not in built:
+        raise ValueError(
+            f"knn_backend={knn_backend!r} only applies to kNN layers, but no layer Mantpy builds uses "
+            "edge_method='knn'. Leave knn_backend='sklearn' (the default)."
+        )
+    if delaunay_jitter is not None:
+        _require_positive_finite(delaunay_jitter, "delaunay_jitter")
+        if "delaunay" not in built:
+            raise ValueError(
+                f"delaunay_jitter={delaunay_jitter!r} only applies to Delaunay layers, but no layer Mantpy "
+                "builds uses edge_method='delaunay'. Leave delaunay_jitter=None (the default)."
+            )
+    _require_delaunay_seed(delaunay_seed, delaunay_jitter)
+
+
+def _mantpy_cell_radius(cell_radius: float | tuple[float, float]) -> float:
+    """``cell_radius`` as the radius of a Mantpy radius cell graph: a number, or ``(0, r)``."""
+    if isinstance(cell_radius, (tuple, list)):
+        if len(cell_radius) != 2 or float(cell_radius[0]) != 0.0:
+            raise ValueError(
+                "With cell_graph='mantpy', cell_radius is the radius of the cell-cell graph: pass a "
+                f"number or (0, r); got {cell_radius!r}."
+            )
+        cell_radius = cell_radius[1]
+    _require_positive_finite(cell_radius, "cell_radius")
+    return float(cell_radius)
+
+
+def _lattice_patch_size(ecm_coords: np.ndarray, patch_size: float | None) -> float | None:
+    """Patch side for ``containing_ring``: the given value, else the lattice step of the centres."""
+    if patch_size is not None:
+        _require_positive_finite(patch_size, "patch_size")
+        return float(patch_size)
+    if len(ecm_coords) == 0:
+        return None
+    if len(ecm_coords) < 2:
+        raise ValueError("edge_method='containing_ring' needs patch_size when fewer than two ECM patches are present.")
+    from scipy.spatial import cKDTree
+
+    step = cKDTree(ecm_coords).query(ecm_coords, k=2)[0][:, 1]
+    step = step[step > 0]
+    if step.size == 0:
+        raise ValueError(
+            "edge_method='containing_ring' cannot infer patch_size (all ECM patches coincide); pass patch_size."
+        )
+    return float(np.median(step))
+
+
+def _cell_ecm_cross_edges(
+    cell_coords: np.ndarray,
+    ecm_coords: np.ndarray,
+    method: str,
+    *,
+    k: int,
+    Dmax: float | None,
+    r: float | None,
+    patch_size: float | None,
+    knn_backend: str,
+    delaunay_max_length: float | None,
+    delaunay_jitter: float | None,
+    delaunay_seed: int,
+) -> list[tuple[int, int, float]]:
+    """Cell--ECM cross edges ``(cell_index, ecm_index, distance)`` for every rule."""
+    if method == "radius":
+        if r is None:
+            raise ValueError("edge_method='radius' requires the `r` parameter.")
+        _require_positive_finite(r, "r")
+    if len(cell_coords) == 0 or len(ecm_coords) == 0:
+        return []
+    if method == "knn":
+        if knn_backend == "scipy":
+            return knn_edges_bipartite_kdtree(cell_coords, ecm_coords, k=k, Dmax=Dmax)
+        return knn_edges_bipartite(cell_coords, ecm_coords, k=k, Dmax=Dmax)
+    if method == "delaunay":
+        return delaunay_edges_bipartite(
+            cell_coords, ecm_coords, Dmax=delaunay_max_length, jitter=delaunay_jitter, seed=delaunay_seed
+        )
+    if method == "radius":
+        return radius_edges_bipartite(cell_coords, ecm_coords, r=float(r))
+    if method == "containing_ring":
+        return containing_ring_edges(cell_coords, ecm_coords, patch_size=patch_size)
+    raise ValueError(f"edge_method must be 'knn', 'delaunay', 'radius' or 'containing_ring', got {method!r}")
 
 
 def _compute_weight(

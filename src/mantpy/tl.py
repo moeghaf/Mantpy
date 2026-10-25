@@ -988,6 +988,65 @@ def lesion_topology_stats_df(
 # ---------------------------------------------------------------------------
 
 
+def _cooccurrence_counts(
+    G,
+    *,
+    n_clusters: int,
+    cluster_attr: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Ordered-endpoint cluster-pair counts and labelled-node counts for one graph.
+
+    Implements the counting convention documented in
+    :func:`cluster_cooccurrence`: each edge between distinct nodes increments
+    both ``inter[c_u, c_v]`` and ``inter[c_v, c_u]`` (so a same-cluster edge
+    adds 2 to the diagonal), and a self-loop increments ``inter[c_u, c_u]``
+    once.  Nodes whose label lies outside ``[0, n_clusters)`` are excluded
+    from the node counts and edges touching them are skipped.  Edge
+    attributes, including weights, are not used.
+    """
+    is_directed = getattr(G, "is_directed", None)
+    if callable(is_directed) and is_directed():
+        raise ValueError(
+            "Cluster co-occurrence is defined for undirected graphs; got a directed "
+            f"{type(G).__name__}.  Convert it explicitly (for example with "
+            "G.to_undirected()) after deciding how reciprocal edges should be merged."
+        )
+    labels = {v: int(d.get(cluster_attr, -1)) for v, d in G.nodes(data=True)}
+    inter = np.zeros((n_clusters, n_clusters), dtype=float)
+    node_count = np.zeros(n_clusters, dtype=float)
+    for lbl in labels.values():
+        if 0 <= lbl < n_clusters:
+            node_count[lbl] += 1
+    for u, v in G.edges():
+        cu, cv = labels[u], labels[v]
+        if not (0 <= cu < n_clusters and 0 <= cv < n_clusters):
+            continue
+        inter[cu, cv] += 1
+        if u != v:
+            # Second orientation of an edge between distinct nodes, including
+            # same-cluster edges (omitted before this correction when cu == cv).
+            inter[cv, cu] += 1
+    return inter, node_count
+
+
+def _cooccurrence_log2_enrichment(
+    inter: np.ndarray,
+    node_count: np.ndarray,
+    *,
+    eps: float,
+) -> np.ndarray:
+    """``log2((inter + eps) / expected)`` with ``expected = inter.sum() * p ⊗ p``.
+
+    ``p`` is ``node_count`` normalised to sum to one.  Cells with zero
+    expected count are returned as 0.
+    """
+    p = node_count / max(node_count.sum(), 1.0)
+    expected = inter.sum() * np.outer(p, p)
+    expected = np.where(expected > 0, expected, np.nan)
+    log_e = np.log2((inter + eps) / expected)
+    return np.where(np.isfinite(log_e), log_e, 0.0)
+
+
 def cluster_cooccurrence(
     adatas: dict | list,
     *,
@@ -999,15 +1058,40 @@ def cluster_cooccurrence(
 ) -> np.ndarray:
     """Aggregate ``log2(observed / expected)`` cluster-cluster co-occurrence.
 
-    For every edge in every supplied ROI's spatial graph, increment the
-    ``inter[c_u, c_v]`` matrix (symmetric).  The expected count under a
-    null model where edges connect clusters in proportion to their node
-    abundance is ``inter.sum() * p ⊗ p`` where ``p`` is the marginal
-    cluster frequency.  The returned matrix is then
-    ``log2((observed + eps) / expected)``.
+    Counting convention (ordered endpoints).  Every undirected edge
+    ``{u, v}`` between distinct nodes contributes both ordered endpoint
+    pairs, incrementing ``inter[c_u, c_v]`` and ``inter[c_v, c_u]``; a
+    same-cluster edge therefore adds 2 to the diagonal, just as a
+    cross-cluster edge adds 1 to each of its two mirrored cells.  A
+    self-loop ``(u, u)`` contributes one ordered pair.  Equivalently,
+    ``inter = Lᵀ A L`` for the unweighted adjacency matrix ``A`` and the
+    one-hot label matrix ``L``.  Edge weights are ignored (unit counts),
+    parallel edges of an undirected multigraph are each counted, and
+    directed graphs are rejected.
+
+    Reference.  The expected count is the abundance product
+    ``inter.sum() * p ⊗ p``, where ``p`` is the marginal frequency of each
+    cluster among all labelled nodes (isolated nodes included).  This is an
+    abundance-adjusted reference, not the exact finite-population
+    expectation under random relabelling; for example, a complete graph is
+    not exactly neutral under it.  ROIs are pooled by summing counts and
+    node abundances before normalising.  The returned matrix is
+    ``log2((observed + eps) / expected)``.  Cells whose expected count is
+    zero (absent cluster or no edges) are set to 0; cells with zero
+    observed count but a positive expected count take
+    ``log2(eps / expected)``.
 
     Subtract two of these matrices to get a Δ-enrichment heatmap (e.g.
     Infected_KO − Infected_WT to see which cluster pairs are KO-enriched).
+
+    .. versionchanged:: unreleased
+        Same-cluster edges are now counted in both orientations, consistent
+        with cross-cluster edges and with the normalisation total.  Earlier
+        releases (including 0.2.0rc1 and 1.0.1) counted a same-cluster edge
+        once but a cross-cluster edge in both orientations, which
+        under-weighted the diagonal by a factor of two relative to the
+        off-diagonal cells and changed the normalisation total.  Directed
+        graphs now raise :class:`ValueError`.
 
     Parameters
     ----------
@@ -1023,8 +1107,11 @@ def cluster_cooccurrence(
     graph_key
         Key under which the NetworkX graph lives in ``adata.uns``.
     ignore_negative_labels
-        If ``True``, edges touching nodes with cluster label ``< 0``
-        (typically ``-1`` for background patches) are skipped.
+        Retained for backward compatibility.  Edges touching nodes whose
+        label lies outside ``[0, n_clusters)`` (typically ``-1`` for
+        background patches) are always skipped, because such labels cannot
+        index the matrix; ``False`` therefore has the same effect as
+        ``True`` (unchanged behaviour).
     eps
         Small additive constant to avoid ``log2(0)`` in empty cells.
 
@@ -1032,33 +1119,26 @@ def cluster_cooccurrence(
     -------
     np.ndarray
         Symmetric ``n_clusters × n_clusters`` log₂-enrichment matrix.
-        Non-finite entries are zeroed.
+        Non-finite entries (zero expected count) are zeroed.
+
+    Raises
+    ------
+    ValueError
+        If a graph is directed.
     """
+    del ignore_negative_labels  # retained for API compatibility; see docstring
     iterable = adatas.values() if isinstance(adatas, dict) else list(adatas)
     inter = np.zeros((n_clusters, n_clusters), dtype=float)
     node_count = np.zeros(n_clusters, dtype=float)
     for adata in iterable:
         if graph_key not in adata.uns:
             continue
-        G = adata.uns[graph_key]
-        labels = {v: int(d.get(cluster_attr, -1)) for v, d in G.nodes(data=True)}
-        for _v, lbl in labels.items():
-            if 0 <= lbl < n_clusters:
-                node_count[lbl] += 1
-        for u, v in G.edges():
-            cu, cv = labels[u], labels[v]
-            if ignore_negative_labels and (cu < 0 or cv < 0):
-                continue
-            if not (0 <= cu < n_clusters and 0 <= cv < n_clusters):
-                continue
-            inter[cu, cv] += 1
-            if cu != cv:
-                inter[cv, cu] += 1
-    p = node_count / max(node_count.sum(), 1.0)
-    expected = inter.sum() * np.outer(p, p)
-    expected = np.where(expected > 0, expected, np.nan)
-    log_e = np.log2((inter + eps) / expected)
-    return np.where(np.isfinite(log_e), log_e, 0.0)
+        roi_inter, roi_nodes = _cooccurrence_counts(
+            adata.uns[graph_key], n_clusters=n_clusters, cluster_attr=cluster_attr
+        )
+        inter += roi_inter
+        node_count += roi_nodes
+    return _cooccurrence_log2_enrichment(inter, node_count, eps=eps)
 
 
 class CooccurrencePermResult(NamedTuple):
@@ -1106,6 +1186,15 @@ def cluster_cooccurrence_permutation_test(
     the K×K log-enrichment matrix, the p-value is
     ``(#{|Δ_perm| ≥ |Δ_obs|} + 1) / (n_perm + 1)``.
 
+    Co-occurrence counts follow :func:`cluster_cooccurrence` (ordered
+    endpoints, abundance-product reference, ROIs pooled within each group),
+    and every graph must be undirected (:class:`ValueError` otherwise).
+
+    .. versionchanged:: unreleased
+        Uses the corrected same-cluster edge counting of
+        :func:`cluster_cooccurrence`; ``delta_obs``, ``p_uncorr`` and
+        ``p_fdr`` therefore differ from earlier releases.
+
     Parameters
     ----------
     adatas
@@ -1145,7 +1234,7 @@ def cluster_cooccurrence_permutation_test(
             adatas,
             group_a_rois=infected_ko_rois,
             group_b_rois=infected_wt_rois,
-            n_clusters=7,
+            n_clusters=6,
             n_perm=5000,
         )
         # Mask non-significant cells for plotting
@@ -1169,23 +1258,7 @@ def cluster_cooccurrence_permutation_test(
         adata = iterable.get(name)
         if adata is None or graph_key not in adata.uns:
             continue
-        G = adata.uns[graph_key]
-        labels = {v: int(d.get(cluster_attr, -1)) for v, d in G.nodes(data=True)}
-        inter = np.zeros((n_clusters, n_clusters), dtype=float)
-        node_count = np.zeros(n_clusters, dtype=float)
-        for _v, lbl in labels.items():
-            if 0 <= lbl < n_clusters:
-                node_count[lbl] += 1
-        for u, v in G.edges():
-            cu, cv = labels[u], labels[v]
-            if cu < 0 or cv < 0:
-                continue
-            if not (0 <= cu < n_clusters and 0 <= cv < n_clusters):
-                continue
-            inter[cu, cv] += 1
-            if cu != cv:
-                inter[cv, cu] += 1
-        per_roi[name] = (inter, node_count)
+        per_roi[name] = _cooccurrence_counts(adata.uns[graph_key], n_clusters=n_clusters, cluster_attr=cluster_attr)
 
     def _agg(roi_names):
         inter = np.zeros((n_clusters, n_clusters))
@@ -1195,11 +1268,7 @@ def cluster_cooccurrence_permutation_test(
                 i, nc = per_roi[name]
                 inter += i
                 node_count += nc
-        p = node_count / max(node_count.sum(), 1.0)
-        expected = inter.sum() * np.outer(p, p)
-        expected = np.where(expected > 0, expected, np.nan)
-        log_e = np.log2((inter + eps) / expected)
-        return np.where(np.isfinite(log_e), log_e, 0.0)
+        return _cooccurrence_log2_enrichment(inter, node_count, eps=eps)
 
     log_a_obs = _agg(group_a_rois)
     log_b_obs = _agg(group_b_rois)
@@ -1941,8 +2010,7 @@ def ecm_neighbour_label_agreement(
             node = f"ecm_{index}"
             if node not in graph:
                 raise ValueError(
-                    f"Sample {sample!r} graph is not row-aligned with its ECM patch table; "
-                    f"missing node {node!r}."
+                    f"Sample {sample!r} graph is not row-aligned with its ECM patch table; missing node {node!r}."
                 )
             neighbour_indices = np.asarray(
                 [int(str(neighbour).rsplit("_", 1)[1]) for neighbour in graph.neighbors(node)],
@@ -2424,17 +2492,13 @@ def loo_reconstruction_evaluation(
                 "after_accuracy": float((reconstructed[is_signal] == reference[is_signal]).mean())
                 if n_signal
                 else float("nan"),
-                "artifact_recovered": float(
-                    (reconstructed[artifact_signal] == reference[artifact_signal]).mean()
-                )
+                "artifact_recovered": float((reconstructed[artifact_signal] == reference[artifact_signal]).mean())
                 if n_artifact
                 else float("nan"),
                 "correction_precision": float((reconstructed[changed] == reference[changed]).mean())
                 if changed.any()
                 else float("nan"),
-                "pristine_relabel_rate": float(
-                    (reconstructed[pristine_signal] != reference[pristine_signal]).mean()
-                )
+                "pristine_relabel_rate": float((reconstructed[pristine_signal] != reference[pristine_signal]).mean())
                 if pristine_signal.any()
                 else float("nan"),
             }
@@ -3130,9 +3194,7 @@ def grouped_metric_summary(
         value_name="value",
     )
     summary = (
-        long.groupby([*groups, "metric"], dropna=False)["value"]
-        .agg(mean="mean", std="std", n="count")
-        .reset_index()
+        long.groupby([*groups, "metric"], dropna=False)["value"].agg(mean="mean", std="std", n="count").reset_index()
     )
     return summary
 
@@ -3198,7 +3260,7 @@ def score_partition(
 
 
 def _knn_adjacency(coords: np.ndarray, k: int) -> sp.csr_matrix:
-    """Symmetric binary k-nearest-neighbour adjacency over points (CSR)."""
+    """Symmetric binary union of k other nearest identities per point (CSR)."""
     from sklearn.neighbors import NearestNeighbors
 
     pts = np.asarray(coords, dtype=float)
@@ -3207,9 +3269,10 @@ def _knn_adjacency(coords: np.ndarray, k: int) -> sp.csr_matrix:
     n = pts.shape[0]
     if not 1 <= k < n:
         raise ValueError(f"k={k!r}: expected 1 <= k < n_points ({n}).")
-    idx = NearestNeighbors(n_neighbors=k + 1).fit(pts).kneighbors(pts, return_distance=False)
+    # Keep the fitted k+1 heuristic; the training-set query excludes self by identity.
+    idx = NearestNeighbors(n_neighbors=k + 1).fit(pts).kneighbors(n_neighbors=k, return_distance=False)
     rows = np.repeat(np.arange(n), k)
-    cols = idx[:, 1 : k + 1].ravel()
+    cols = idx.ravel()
     w = sp.coo_matrix((np.ones(rows.size), (rows, cols)), shape=(n, n)).tocsr()
     return w.maximum(w.T)
 
@@ -3612,9 +3675,7 @@ def _resolve_adata_values(
         if matrix.ndim == 1:
             matrix = matrix[:, None]
         if matrix.ndim != 2 or matrix.shape[0] != adata.n_obs:
-            raise ValueError(
-                f"values array must have shape (n_obs,) or (n_obs, n_features); got {matrix.shape}."
-            )
+            raise ValueError(f"values array must have shape (n_obs,) or (n_obs, n_features); got {matrix.shape}.")
         names = tuple(f"input_{index}" for index in range(matrix.shape[1]))
         return np.asarray(matrix, dtype=float), names, "array"
 
@@ -3756,11 +3817,7 @@ def smooth_graph_signal(
         "alpha": float(alpha),
         "n_iter": int(n_iter),
         "node_type_key": node_type_key,
-        "node_types": None
-        if node_type is None
-        else [node_type]
-        if isinstance(node_type, str)
-        else list(node_type),
+        "node_types": None if node_type is None else [node_type] if isinstance(node_type, str) else list(node_type),
         "finite_counts": [int(value) for value in initial_finite.sum(axis=0)],
         "missing_policy": "fixed support; missing values remain NaN",
     }

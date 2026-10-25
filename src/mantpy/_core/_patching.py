@@ -340,11 +340,17 @@ def remove_background(
     features: np.ndarray,
     quantile: float,
 ) -> np.ndarray:
-    """Return boolean mask (True = keep) for patches above background threshold.
+    """Return a boolean keep mask for the requested background quantile.
 
-    Background is defined as patches whose mean feature value is below the
-    ``quantile``-th percentile across all patches.
+    A zero quantile disables this filter and retains every patch, including
+    tied minima. For a positive quantile, keep patches whose mean feature
+    value is strictly above the threshold; values at the threshold are
+    removed. An empty input returns an empty mask.
     """
+    if not 0 <= quantile <= 1:
+        raise ValueError("quantile must lie in [0, 1].")
+    if quantile == 0 or len(features) == 0:
+        return np.ones(len(features), dtype=bool)
     row_means = features.mean(axis=1)
     threshold = np.quantile(row_means, quantile)
     return row_means > threshold

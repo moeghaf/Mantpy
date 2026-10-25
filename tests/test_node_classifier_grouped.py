@@ -12,9 +12,7 @@ node_classifier = pytest.importorskip("mantpy.nn._node_classifier")
 def _graph(label: int, clusters: list[int], n_features: int = 4):
     cluster_array = np.asarray(clusters, dtype=np.int64)
     graph = Data(
-        x=torch.eye(n_features, dtype=torch.float32)[
-            torch.from_numpy(cluster_array)
-        ],
+        x=torch.eye(n_features, dtype=torch.float32)[torch.from_numpy(cluster_array)],
         edge_index=torch.empty((2, 0), dtype=torch.long),
     )
     graph.cluster = torch.from_numpy(cluster_array)
@@ -35,6 +33,41 @@ def _four_class_cohort():
                 labels.append(label)
                 groups.append(group)
     return graphs, np.asarray(labels), np.asarray(groups)
+
+
+@pytest.mark.parametrize("graph_targets", ["absent", "contradictory"])
+def test_constructor_labels_are_the_actual_training_targets(monkeypatch, graph_targets):
+    labels = np.asarray([0, 1, 0, 1])
+    graphs = [_graph(1 - label, [0, 1], n_features=2) for label in labels]
+    if graph_targets == "absent":
+        for graph in graphs:
+            del graph.y
+    observed_targets = []
+    original_loss = node_classifier.F.cross_entropy
+
+    def record_loss(logits, targets, **kwargs):
+        observed_targets.append(targets.detach().cpu().numpy().copy())
+        return original_loss(logits, targets, **kwargs)
+
+    monkeypatch.setattr(node_classifier.F, "cross_entropy", record_loss)
+    classifier = nn.NodeClassifier(
+        graphs,
+        labels=labels,
+        n_classes=2,
+        hidden_dim=4,
+        n_layers=1,
+        dropout=0.0,
+        device="cpu",
+    )
+    classifier.fit(
+        splits=[([0, 1], [2, 3]), ([2, 3], [0, 1])],
+        epochs=1,
+        verbose=False,
+    )
+
+    assert len(observed_targets) == 2
+    for targets in observed_targets:
+        np.testing.assert_array_equal(targets, [0, 0, 1, 1])
 
 
 def test_internal_stratified_group_folds_hold_one_mouse_per_class():
@@ -91,11 +124,7 @@ def test_grouped_fit_uses_train_fold_transforms_and_reports_eight_mice():
         expected_mean = train_x.mean(axis=0)
         expected_sd = train_x.std(axis=0)
         expected_sd[expected_sd == 0] = 1.0
-        observed = (
-            transforms.query("seed == 0 and fold == @fold")
-            .sort_values("feature")
-            .reset_index(drop=True)
-        )
+        observed = transforms.query("seed == 0 and fold == @fold").sort_values("feature").reset_index(drop=True)
         np.testing.assert_allclose(observed["train_mean"], expected_mean)
         np.testing.assert_allclose(observed["train_sd"], expected_sd)
 
@@ -123,6 +152,7 @@ def test_grouped_multiseed_ig_uses_every_held_out_fit():
     call_counts = [0, 0]
     handles = []
     for index, fit in enumerate(classifier._held_out_fits[0]):
+
         def _count_call(_module, _inputs, _output, *, model_index=index):
             call_counts[model_index] += 1
 

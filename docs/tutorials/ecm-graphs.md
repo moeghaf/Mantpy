@@ -100,7 +100,8 @@ for method in ("knn", "delaunay", "grid"):
     print(f"{method:10s} {g.number_of_edges():4d} edges")
 ```
 
-`knn` gives every patch the same degree. `delaunay` follows the spatial
+`knn` selects up to k neighbours per patch; after the graph is made
+undirected, node degrees can exceed k and need not be equal. `delaunay` follows the spatial
 tessellation and adapts to local density. `grid` connects patches to their
 immediate tile neighbours, which is the most literal reading of "adjacent
 matrix". There is no universally right answer — pick the one whose notion of

@@ -33,7 +33,9 @@ def test_ecm_patches_from_differently_shaped_images_uses_shared_scaler() -> None
     )
     summary = mt.pp.ecm_patch_summary(cohort)
     assert summary.n_samples == 2
-    assert summary.n_patches == 8
+    # With background filtering disabled, both complete image grids are retained:
+    # four 2x2 tiles in r1 and six in r2, including each image's minimum tile.
+    assert summary.n_patches == 10
     assert summary.n_features == 2
     assert summary.n_background is None
     assert all("ecm_pixel_scaler" in adata.uns for adata in cohort.values())

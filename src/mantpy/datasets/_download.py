@@ -41,8 +41,8 @@ _ALLOWED_DATA_SUFFIXES = (
 _DOWNLOAD_CITATION_NOTICES: dict[str, tuple[str, str]] = {
     "coliv_intestine": (
         "Collagen-IV intestine",
-        "HuBMAP dataset HBM893.MCGS.487. "
-        "https://portal.hubmapconsortium.org/browse/dataset/HBM893.MCGS.487\n"
+        "HuBMAP image dataset HBM926.SHNZ.594 (raw dataset HBM734.XBSR.357). "
+        "https://portal.hubmapconsortium.org/browse/dataset/HBM926.SHNZ.594\n"
         "Mantpy tutorial dataset archive: https://doi.org/10.5281/zenodo.21538382",
     ),
     "balbc_pbs_lung": (

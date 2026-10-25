@@ -8,12 +8,7 @@ authors:
 repository-code: "https://github.com/moeghaf/Mantpy"
 url: "https://mantpy.readthedocs.io"
 license: MIT
-version: 1.0.0
-date-released: "2026-08-19"
-identifiers:
-  - type: doi
-    value: 10.5281/zenodo.21538382
-    description: "ECM-inclusive datasets archive"
+version: 1.0.2rc1
 preferred-citation:
   type: article
   title: "Mantpy: a framework for extracellular matrix analysis in spatial proteomics"

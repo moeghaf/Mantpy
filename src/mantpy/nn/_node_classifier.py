@@ -78,14 +78,9 @@ def _stratified_group_folds(
 
     test_groups: list[set[str]] = [set() for _ in range(n_splits)]
     for label in sorted(set(group_labels.values())):
-        class_groups = sorted(
-            group for group, group_label in group_labels.items() if group_label == label
-        )
+        class_groups = sorted(group for group, group_label in group_labels.items() if group_label == label)
         if len(class_groups) < n_splits:
-            raise ValueError(
-                f"Class {label} has {len(class_groups)} groups; "
-                f"at least {n_splits} are required."
-            )
+            raise ValueError(f"Class {label} has {len(class_groups)} groups; at least {n_splits} are required.")
         for index, group in enumerate(class_groups):
             test_groups[index % n_splits].add(group)
 
@@ -283,7 +278,9 @@ class NodeClassifier:
         per-graph label ``y``, and (for attribution) per-node ``cluster`` /
         ``pos``. Build them with :func:`build_ohe_cluster_graphs`.
     labels
-        Per-graph integer labels.  Defaults to ``[g.y for g in graphs]``.
+        Per-graph integer labels. Defaults to ``[g.y for g in graphs]``.
+        Explicit labels are used for both splitting and training and override
+        any ``graph.y`` attributes. With explicit labels, ``graph.y`` is optional.
     n_classes, hidden_dim, n_layers, dropout
         Architecture.  ``in_channels`` is inferred from ``graphs[0].x``.
     device
@@ -382,10 +379,7 @@ class NodeClassifier:
             )
             self._groups = groups_array.astype(str)
         elif splits is not None:
-            resolved_splits = [
-                (np.asarray(train, dtype=int), np.asarray(test, dtype=int))
-                for train, test in splits
-            ]
+            resolved_splits = [(np.asarray(train, dtype=int), np.asarray(test, dtype=int)) for train, test in splits]
             self._groups = None
         else:
             splitter = StratifiedKFold(
@@ -393,9 +387,7 @@ class NodeClassifier:
                 shuffle=True,
                 random_state=seed,
             )
-            resolved_splits = list(
-                splitter.split(np.zeros(len(self._graphs)), self._labels)
-            )
+            resolved_splits = list(splitter.split(np.zeros(len(self._graphs)), self._labels))
             self._groups = None
         self._validate_splits(resolved_splits)
 
@@ -426,11 +418,14 @@ class NodeClassifier:
                     lr=lr,
                     weight_decay=weight_decay,
                 )
-                batch = Batch.from_data_list(
-                    [self._graphs[index] for index in train_indices]
-                ).to(self._device)
+                batch = Batch.from_data_list([self._graphs[index] for index in train_indices]).to(self._device)
                 batch_x = (batch.x - mu) / sd
-                batch_y = batch.y[batch.batch]
+                graph_targets = torch.as_tensor(
+                    self._labels[train_indices],
+                    dtype=torch.long,
+                    device=self._device,
+                )
+                batch_y = graph_targets[batch.batch]
                 counts = np.bincount(
                     self._labels[train_indices],
                     minlength=self._n_classes,
@@ -458,9 +453,7 @@ class NodeClassifier:
                         graph = self._graphs[index]
                         graph_x = (graph.x.to(self._device) - mu) / sd
                         edge_index = graph.edge_index.to(self._device)
-                        seed_oof[index] = (
-                            torch.softmax(net(graph_x, edge_index), 1).cpu().numpy()
-                        )
+                        seed_oof[index] = torch.softmax(net(graph_x, edge_index), 1).cpu().numpy()
                         self._held_out_fits[index].append(held_out_fit)
                 if verbose:
                     _log.info(
@@ -592,9 +585,7 @@ class NodeClassifier:
                     "group_true": group_true,
                     "group_pred": group_pred,
                     "group_probability": group_probability,
-                    "group_macro_f1": float(
-                        f1_score(group_true, group_pred, average="macro")
-                    ),
+                    "group_macro_f1": float(f1_score(group_true, group_pred, average="macro")),
                     "group_accuracy": float((group_pred == group_true).mean()),
                     "group_confusion": group_confusion,
                 }
@@ -614,9 +605,7 @@ class NodeClassifier:
             )
             row = {
                 "seed": seed,
-                "graph_macro_f1": float(
-                    f1_score(graph_true, graph_pred, average="macro")
-                ),
+                "graph_macro_f1": float(f1_score(graph_true, graph_pred, average="macro")),
                 "graph_accuracy": float((graph_true == graph_pred).mean()),
             }
             if self._groups is not None:
@@ -627,9 +616,7 @@ class NodeClassifier:
                 )
                 row.update(
                     {
-                        "group_macro_f1": float(
-                            f1_score(group_true, group_pred, average="macro")
-                        ),
+                        "group_macro_f1": float(f1_score(group_true, group_pred, average="macro")),
                         "group_accuracy": float((group_true == group_pred).mean()),
                     }
                 )
@@ -644,9 +631,7 @@ class NodeClassifier:
         if level == "group" and self._groups is None:
             raise ValueError("Group predictions require groups passed to fit().")
         prediction_groups = self._groups if level == "group" else None
-        sources = [("ensemble", None, self._oof)] + [
-            ("seed", seed, self._oof_by_seed[seed]) for seed in self._seeds
-        ]
+        sources = [("ensemble", None, self._oof)] + [("seed", seed, self._oof_by_seed[seed]) for seed in self._seeds]
         rows = []
         for estimate, seed, oof in sources:
             ids, true_labels, predictions, probabilities = self._prediction_level(
@@ -673,9 +658,7 @@ class NodeClassifier:
                 }
                 row.update(
                     {
-                        f"probability_class_{class_index}": float(
-                            probabilities[index, class_index]
-                        )
+                        f"probability_class_{class_index}": float(probabilities[index, class_index])
                         for class_index in range(self._n_classes)
                     }
                 )
@@ -705,9 +688,7 @@ class NodeClassifier:
                 if key in seen:
                     continue
                 seen.add(key)
-                for feature, (mean, sd) in enumerate(
-                    zip(fit.mu.cpu().numpy(), fit.sd.cpu().numpy(), strict=True)
-                ):
+                for feature, (mean, sd) in enumerate(zip(fit.mu.cpu().numpy(), fit.sd.cpu().numpy(), strict=True)):
                     rows.append(
                         {
                             "seed": fit.seed,
@@ -742,13 +723,7 @@ class NodeClassifier:
         """
         self._check_fit()
         graph_clusters = [graph.cluster.cpu().numpy() for graph in self._graphs]
-        clusters = sorted(
-            {
-                int(cluster)
-                for values in graph_clusters
-                for cluster in values
-            }
-        )
+        clusters = sorted({int(cluster) for values in graph_clusters for cluster in values})
         if self._groups is None:
             unit_ids = np.asarray(
                 [str(index) for index in range(len(self._graphs))],
@@ -760,11 +735,7 @@ class NodeClassifier:
 
         rows: list[dict[str, str | int | float]] = []
         for cluster in clusters:
-            present = [
-                index
-                for index, values in enumerate(graph_clusters)
-                if np.any(values == cluster)
-            ]
+            present = [index for index, values in enumerate(graph_clusters) if np.any(values == cluster)]
             for class_idx in range(self._n_classes):
                 roi_means: dict[int, float] = {}
                 roi_nodes: dict[int, int] = {}
@@ -775,11 +746,7 @@ class NodeClassifier:
                     roi_nodes[index] = int(values.size)
 
                 for unit_id in ordered_units:
-                    indices = [
-                        index
-                        for index in present
-                        if unit_ids[index] == unit_id
-                    ]
+                    indices = [index for index in present if unit_ids[index] == unit_id]
                     if not indices:
                         continue
                     rows.append(
@@ -787,9 +754,7 @@ class NodeClassifier:
                             "class_idx": class_idx,
                             "cluster": cluster,
                             "unit_id": str(unit_id),
-                            "mean_probability": float(
-                                np.mean([roi_means[index] for index in indices])
-                            ),
+                            "mean_probability": float(np.mean([roi_means[index] for index in indices])),
                             "n_rois": len(indices),
                             "n_nodes": sum(roi_nodes[index] for index in indices),
                         }
@@ -827,11 +792,7 @@ class NodeClassifier:
                     "class_idx": int(class_idx),
                     "cluster": int(cluster),
                     "mean_probability": float(probabilities.mean()),
-                    "unit_sd": (
-                        float(np.std(probabilities, ddof=1))
-                        if probabilities.size > 1
-                        else 0.0
-                    ),
+                    "unit_sd": (float(np.std(probabilities, ddof=1)) if probabilities.size > 1 else 0.0),
                     "n_units": int(probabilities.size),
                     "n_rois": int(values["n_rois"].sum()),
                     "n_nodes": int(values["n_nodes"].sum()),
@@ -886,10 +847,7 @@ class NodeClassifier:
                 held_out_fit: _HeldOutFit = fit,
             ) -> torch.Tensor:
                 outputs = [
-                    held_out_fit.net(xb[batch], ei)[:, target_class]
-                    .mean()
-                    .unsqueeze(0)
-                    for batch in range(xb.shape[0])
+                    held_out_fit.net(xb[batch], ei)[:, target_class].mean().unsqueeze(0) for batch in range(xb.shape[0])
                 ]
                 return torch.cat(outputs)
 

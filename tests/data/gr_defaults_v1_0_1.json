@@ -1,0 +1,681 @@
+{
+"cell_delaunay": {
+"cell_nx": {
+"edges": "be6948cc1f955c483fd5416209c24006631acfd735aba5b990cdccbfce2dce6e",
+"n": 108,
+"values": "ab8e58284b3ada774ad36be01fa947f21df0134b5fd1c46393d808076ae537a7"
+},
+"cell_obsp": {
+"edges": "225d112dcfdc9182eca86b156dae9cceeb39a373513284c9d69b7f509a13a3e6",
+"n": 216,
+"values": "4f878a856cd480abbb4f52fe80755f2416fd1e5e3088431df079faf5f56df416"
+},
+"log": {
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"k": 5,
+"n_edges": 108
+}
+}
+},
+"cell_knn3_uniform": {
+"cell_nx": {
+"edges": "6f500ff613c6c23f53b3bc4f2a2597dfcab32a426238bb2d20a7431db8528fe8",
+"n": 74,
+"values": "219c1f163465f764020619b4c946a6b6d4fc13944fb5e915b3031c3229f6a29e"
+},
+"cell_obsp": {
+"edges": "8643e27ca1c8527938f0403eff2037c082d2083727ca8d6d3ba170ce5b20a934",
+"n": 148,
+"values": "6f23d3c9ca5c706a98478f693f25e3583eb194c04089e1b0b18787c1e0e70ada"
+},
+"log": {
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "uniform",
+"k": 3,
+"n_edges": 74
+}
+}
+},
+"cell_knn4_dmax12": {
+"cell_nx": {
+"edges": "a4198e8f9c9bf30c3447fe72de031b28bc706db6a9afded5f024e1dc3aae27a6",
+"n": 66,
+"values": "c0a48b80deda11f777ddc0bcc9cbb2155699a909a4c2cb4566dc32d93d27d35d"
+},
+"cell_obsp": {
+"edges": "234d8192e0fcfedbac2dc910a62b6706f87fcfbc495640a447388d947fdff956",
+"n": 132,
+"values": "522caf09a774214030a2b5713e6ae2fc80e6b97cb8d4e0302d550093b67a03b3"
+},
+"log": {
+"build_cell_graph": {
+"Dmax_CC": 12.0,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 4,
+"n_edges": 66
+}
+}
+},
+"cell_knn5": {
+"cell_nx": {
+"edges": "247c38556d9fb28466d03bc96ce380e1ccc6e2d9e32757a8121a17c16ff7532f",
+"n": 124,
+"values": "8bef7f62cf5d525438f0470addf2894480ca97e1f6a4b85e0dc4ae24218824d3"
+},
+"cell_obsp": {
+"edges": "a1cb674c44cb96de9324976ce47882b668b602ab025903ac6641c771fa22702e",
+"n": 248,
+"values": "b356780fb56eb73846c99068b8c59e484ec476f3e528b69b3798e03dc8dc56ac"
+},
+"log": {
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 5,
+"n_edges": 124
+}
+}
+},
+"cell_radius11": {
+"cell_nx": {
+"edges": "811b6302c05002386bb065eb165ec92803cce77a8923c095cdd8de4ffa6a22f1",
+"n": 58,
+"values": "aa35154cef1e07d7fcde32d270e825291dde8f1dc747bf43fb59e543df6c6859"
+},
+"cell_obsp": {
+"edges": "722f30080322d95dfcb2bd7732a298450ac41be30b05c26d5e825119e6024a7c",
+"n": 116,
+"values": "b54067be6c08d9d2a4546c54a136951f3c8641e18504015890691c27d5a56e3f"
+},
+"log": {
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "radius",
+"edge_weight": "inv_distance",
+"k": 5,
+"n_edges": 58
+}
+}
+},
+"cohort_mantpy": {
+"cell_nx": {
+"edges": "c3440dfa8de180c52b05bc3fecaa993a64b401b8578194988f8ef45648687865",
+"n": 99,
+"values": "16c31d7cc929cf54b0a4434fe3a667473fe63d033d91fa887078ae6214213dcb"
+},
+"cell_obsp": {
+"edges": "316310f9cdc51352647d744b631e7daf0bc232815cc66a248f206c261fb3099c",
+"n": 198,
+"values": "9ce68452a5729e116ca6e106f876e44bdcf5fdd8d4b823b7aa40fae91914892a"
+},
+"cross_nx": {
+"edges": "31c974b5290ebbd28770b6c13df85abf65b9ef5d3cd1cac995fb8cacdc5bf471",
+"n": 102,
+"values": "fbe80bdd3a25f83a51c53813451b14cc6b02ab63ad21afce8e598a3959c15fb6"
+},
+"ecm_nx": {
+"edges": "40e15edfcf44db1dffc3eeb90e918f3d6cdf70415c88d6c0ee942ca86341fdb8",
+"n": 120,
+"values": "2426e0364073cd5b78df3bf595799dd8d1b145ed5980f94375469f6be09645c2"
+},
+"joint_counts": [
+85,
+321
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"k": 5,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 102,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 4,
+"n_edges": 99
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 120
+}
+},
+"rebuild_kwargs": {
+"cell_Dmax": null,
+"cell_ecm_Dmax": null,
+"cell_ecm_edge_method": "delaunay",
+"cell_ecm_k": 5,
+"cell_edge_method": "knn",
+"cell_k": 4,
+"ecm_Dmax": null,
+"ecm_edge_method": "delaunay",
+"ecm_grid_connectivity": 8,
+"ecm_k": 5,
+"edge_features": null
+},
+"summary": [
+85,
+40,
+45,
+99,
+120,
+102
+]
+},
+"cross_default_delaunay": {
+"cell_nx": {
+"edges": "6f500ff613c6c23f53b3bc4f2a2597dfcab32a426238bb2d20a7431db8528fe8",
+"n": 74,
+"values": "e4c5f56a4f6d5053fcb8b28ce5117fdb87b6fd154d022ca0feeaf6c0cca0bada"
+},
+"cell_obsp": {
+"edges": "8643e27ca1c8527938f0403eff2037c082d2083727ca8d6d3ba170ce5b20a934",
+"n": 148,
+"values": "1203b56daf4b30be6f738878180d3931a028ad4cda667d0145d1843f15883fcf"
+},
+"cross_nx": {
+"edges": "31c974b5290ebbd28770b6c13df85abf65b9ef5d3cd1cac995fb8cacdc5bf471",
+"n": 102,
+"values": "fbe80bdd3a25f83a51c53813451b14cc6b02ab63ad21afce8e598a3959c15fb6"
+},
+"ecm_nx": {
+"edges": "66ff1950ddb0e528dba080cf9f001763bcd1d22a14c3b49dad4f4531a035de61",
+"n": 82,
+"values": "31aec4918ffbbe742a17570de22f9b399f824c55d769e7f6b2a5132c5853d624"
+},
+"joint_counts": [
+85,
+258
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"k": 5,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 102,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 3,
+"n_edges": 74
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 3,
+"n_ecm_nodes": 45,
+"n_edges": 82
+}
+}
+},
+"cross_knn3": {
+"cell_nx": {
+"edges": "6f500ff613c6c23f53b3bc4f2a2597dfcab32a426238bb2d20a7431db8528fe8",
+"n": 74,
+"values": "e4c5f56a4f6d5053fcb8b28ce5117fdb87b6fd154d022ca0feeaf6c0cca0bada"
+},
+"cell_obsp": {
+"edges": "8643e27ca1c8527938f0403eff2037c082d2083727ca8d6d3ba170ce5b20a934",
+"n": 148,
+"values": "1203b56daf4b30be6f738878180d3931a028ad4cda667d0145d1843f15883fcf"
+},
+"cross_nx": {
+"edges": "a2f681f9f7497e5b551d86e7c95b0df9adb586484eb1e878e6282e9c507415a1",
+"n": 120,
+"values": "deafdb16185e4b8dbd7ab17655ef8704399131dc946808bb5341dbdef4e5aa80"
+},
+"ecm_nx": {
+"edges": "66ff1950ddb0e528dba080cf9f001763bcd1d22a14c3b49dad4f4531a035de61",
+"n": 82,
+"values": "31aec4918ffbbe742a17570de22f9b399f824c55d769e7f6b2a5132c5853d624"
+},
+"joint_counts": [
+85,
+276
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 3,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 120,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 3,
+"n_edges": 74
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 3,
+"n_ecm_nodes": 45,
+"n_edges": 82
+}
+}
+},
+"cross_knn4_dmax9": {
+"cell_nx": {
+"edges": "6f500ff613c6c23f53b3bc4f2a2597dfcab32a426238bb2d20a7431db8528fe8",
+"n": 74,
+"values": "e4c5f56a4f6d5053fcb8b28ce5117fdb87b6fd154d022ca0feeaf6c0cca0bada"
+},
+"cell_obsp": {
+"edges": "8643e27ca1c8527938f0403eff2037c082d2083727ca8d6d3ba170ce5b20a934",
+"n": 148,
+"values": "1203b56daf4b30be6f738878180d3931a028ad4cda667d0145d1843f15883fcf"
+},
+"cross_nx": {
+"edges": "94d4058835c60d79bab8ef60854c4e62e8f4689ca2beff60952d1b74848fd3e8",
+"n": 68,
+"values": "33f21dbda3bf97de5f04334377286f09614080ba97c89d1e6aa3fee8d8482b33"
+},
+"ecm_nx": {
+"edges": "66ff1950ddb0e528dba080cf9f001763bcd1d22a14c3b49dad4f4531a035de61",
+"n": 82,
+"values": "31aec4918ffbbe742a17570de22f9b399f824c55d769e7f6b2a5132c5853d624"
+},
+"joint_counts": [
+85,
+224
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": 9.0,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 4,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 68,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 3,
+"n_edges": 74
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 3,
+"n_ecm_nodes": 45,
+"n_edges": 82
+}
+}
+},
+"cross_lattice_knn4": {
+"cell_nx": {
+"edges": "6f500ff613c6c23f53b3bc4f2a2597dfcab32a426238bb2d20a7431db8528fe8",
+"n": 74,
+"values": "e4c5f56a4f6d5053fcb8b28ce5117fdb87b6fd154d022ca0feeaf6c0cca0bada"
+},
+"cell_obsp": {
+"edges": "8643e27ca1c8527938f0403eff2037c082d2083727ca8d6d3ba170ce5b20a934",
+"n": 148,
+"values": "1203b56daf4b30be6f738878180d3931a028ad4cda667d0145d1843f15883fcf"
+},
+"cross_nx": {
+"edges": "1ff514a8ec04140562c86d4190236910ab3416f32057d8579da13dcb25d02e00",
+"n": 160,
+"values": "c0208ecb5fbe4309b7ea8b9ae913d37e20965f053b8516bd96a83eb14a8c5dc5"
+},
+"ecm_nx": {
+"edges": "1d346a33dbd3b725714e9d8239a3efa9d9d7ce4c33d87bc4e796b7788dfbf957",
+"n": 80,
+"values": "938884bd269b3f5a99e5baf4db94d94b9dee5cae3e8cb1f354b9dbbf50aea4e0"
+},
+"joint_counts": [
+85,
+314
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 4,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 160,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 3,
+"n_edges": 74
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 3,
+"n_ecm_nodes": 45,
+"n_edges": 80
+}
+}
+},
+"ecm_delaunay": {
+"ecm_nx": {
+"edges": "40e15edfcf44db1dffc3eeb90e918f3d6cdf70415c88d6c0ee942ca86341fdb8",
+"n": 120,
+"values": "2426e0364073cd5b78df3bf595799dd8d1b145ed5980f94375469f6be09645c2"
+},
+"log": {
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 120
+}
+}
+},
+"ecm_grid4": {
+"ecm_nx": {
+"edges": "75cc66c3b2c8148c535ca6f303d2c4ec32eeda542fdb98f4417b61a46c2b5b49",
+"n": 71,
+"values": "35f25debce71a3817b8eea7f8619ff8bd42ae986f3dc51f078be80ce18fb7ba3"
+},
+"log": {
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "grid",
+"edge_weight": "inv_distance",
+"grid_connectivity": 4,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 71
+}
+}
+},
+"ecm_grid8": {
+"ecm_nx": {
+"edges": "973300ca781059d973f799bf688449837280a7f8d84e8c41bc1ed7ee39916665",
+"n": 132,
+"values": "1841eb364d2e1ac37468f1d3f1669f62ede1d7258f84319ad7c2017385902447"
+},
+"log": {
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "grid",
+"edge_weight": "inv_distance",
+"grid_connectivity": 8,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 132
+}
+}
+},
+"ecm_knn5": {
+"ecm_nx": {
+"edges": "c721cd2fadef5a2e406a79677cddb027aa4306a347855a3258952e11f48a2567",
+"n": 131,
+"values": "a2f9e9b55a490251744c167e7e8b2eec14b17ae21fe927bd08b9844075cc3366"
+},
+"log": {
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 131
+}
+}
+},
+"ecm_knn6_dmax14": {
+"ecm_nx": {
+"edges": "e440e6e68f6efe7c067b890d058007ddc764ca046a325853d9445d2e1aadc9c2",
+"n": 110,
+"values": "df1bb4fc4743553f8327eab03f808e0028e47c36f7d3dda02e7b98c847e77f4d"
+},
+"log": {
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 6,
+"n_ecm_nodes": 45,
+"n_edges": 110
+}
+}
+},
+"ecm_radius13": {
+"ecm_nx": {
+"edges": "3cefdc1d7902de30e30ed462c18c79f22bcdbd96827023d1fd592611c9a93f8f",
+"n": 96,
+"values": "3c8a2e722338f4f50784697ff8f89a9769d4bb7876ba37a17e41043a857068a1"
+},
+"log": {
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "radius",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 96
+}
+}
+},
+"ensure_default": {
+"cell_nx": {
+"edges": "247c38556d9fb28466d03bc96ce380e1ccc6e2d9e32757a8121a17c16ff7532f",
+"n": 124,
+"values": "8bef7f62cf5d525438f0470addf2894480ca97e1f6a4b85e0dc4ae24218824d3"
+},
+"cell_obsp": {
+"edges": "a1cb674c44cb96de9324976ce47882b668b602ab025903ac6641c771fa22702e",
+"n": 248,
+"values": "b356780fb56eb73846c99068b8c59e484ec476f3e528b69b3798e03dc8dc56ac"
+},
+"cross_nx": {
+"edges": "1f28e2e79c3dc3206320bfad96961596729cbed35affaf43f6fc26fa41c0fa68",
+"n": 200,
+"values": "c5282f9404419afe9cbfb005b7e277a5f37f73d88501f628c461dacc68201abd"
+},
+"ecm_nx": {
+"edges": "c721cd2fadef5a2e406a79677cddb027aa4306a347855a3258952e11f48a2567",
+"n": 131,
+"values": "a2f9e9b55a490251744c167e7e8b2eec14b17ae21fe927bd08b9844075cc3366"
+},
+"joint_counts": [
+85,
+455
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 5,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 200,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 5,
+"n_edges": 124
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 131
+}
+}
+},
+"ensure_delaunay_delaunay": {
+"cell_nx": {
+"edges": "be6948cc1f955c483fd5416209c24006631acfd735aba5b990cdccbfce2dce6e",
+"n": 108,
+"values": "ab8e58284b3ada774ad36be01fa947f21df0134b5fd1c46393d808076ae537a7"
+},
+"cell_obsp": {
+"edges": "225d112dcfdc9182eca86b156dae9cceeb39a373513284c9d69b7f509a13a3e6",
+"n": 216,
+"values": "4f878a856cd480abbb4f52fe80755f2416fd1e5e3088431df079faf5f56df416"
+},
+"cross_nx": {
+"edges": "31c974b5290ebbd28770b6c13df85abf65b9ef5d3cd1cac995fb8cacdc5bf471",
+"n": 102,
+"values": "fbe80bdd3a25f83a51c53813451b14cc6b02ab63ad21afce8e598a3959c15fb6"
+},
+"ecm_nx": {
+"edges": "40e15edfcf44db1dffc3eeb90e918f3d6cdf70415c88d6c0ee942ca86341fdb8",
+"n": 120,
+"values": "2426e0364073cd5b78df3bf595799dd8d1b145ed5980f94375469f6be09645c2"
+},
+"joint_counts": [
+85,
+330
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"k": 5,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 102,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": null,
+"edge_features": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"k": 5,
+"n_edges": 108
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "delaunay",
+"edge_weight": "inv_distance",
+"grid_connectivity": null,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 120
+}
+}
+},
+"ensure_lattice_grid": {
+"cell_nx": {
+"edges": "c35ac4722cb5db92b30f57a496f0d041b0153b22abdb79c9d158a6a5d8c560ae",
+"n": 81,
+"values": "6da0fbe1c07400eba2d0d6ed24aadd8e1e4595fc84aeee0dc0364c7989cd442e"
+},
+"cell_obsp": {
+"edges": "5ef1e5f89e6521370c46c139008b683c242f6701f87839a2b3fb96972e9e6ea4",
+"n": 162,
+"values": "cef51757aefd1967df8bdacf359f0dc905332c49ca6392992a665c40b554f987"
+},
+"cross_nx": {
+"edges": "e919e3e4620145be154ac4868e1e484c1971dc7fb7f08ea247a667f8be2efb11",
+"n": 149,
+"values": "750688f61397197a2529e8f34926c5491f7d2f98ce40f2ade2bdee3faa91024d"
+},
+"ecm_nx": {
+"edges": "75cc66c3b2c8148c535ca6f303d2c4ec32eeda542fdb98f4417b61a46c2b5b49",
+"n": 71,
+"values": "35f25debce71a3817b8eea7f8619ff8bd42ae986f3dc51f078be80ce18fb7ba3"
+},
+"joint_counts": [
+85,
+301
+],
+"log": {
+"build_cell_ecm_graph": {
+"Dmax_CE": 14.0,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 4,
+"mode": "cell+ecm",
+"n_cell_ecm_edges": 149,
+"n_cell_nodes": 40,
+"n_ecm_nodes": 45
+},
+"build_cell_graph": {
+"Dmax_CC": 15.0,
+"edge_features": null,
+"edge_method": "knn",
+"edge_weight": "inv_distance",
+"k": 4,
+"n_edges": 81
+},
+"build_ecm_graph": {
+"edge_features": null,
+"edge_method": "grid",
+"edge_weight": "inv_distance",
+"grid_connectivity": 4,
+"k": 5,
+"n_ecm_nodes": 45,
+"n_edges": 71
+}
+}
+}
+}

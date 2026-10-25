@@ -87,6 +87,20 @@ class TestNeighbourhoodClustering:
 
 
 class TestEcmToAnndata:
+    def test_filtered_reordered_source_identifiers_survive_h5ad(self, adata_with_patches, tmp_path):
+        source = adata_with_patches.uns["ecm_patches"].iloc[[2, 0]].copy()
+        source.index = ["patch:49", "patch:17"]
+        adata_with_patches.uns["ecm_patches"] = source
+        ecm = mt.tl.ecm_to_anndata(adata_with_patches)
+        assert ecm.obs_names.tolist() == ["patch:49", "patch:17"]
+        path = tmp_path / "ecm.h5ad"
+        ecm.write_h5ad(path)
+        from anndata import read_h5ad
+
+        restored = read_h5ad(path)
+        assert restored.obs_names.tolist() == source.index.tolist()
+        np.testing.assert_allclose(restored.obsm["spatial"], source[["x", "y"]].values)
+
     def test_basic_shape(self, adata_with_patches):
         """Returns AnnData with rows = patches, columns = features."""
         ecm_adata = mt.tl.ecm_to_anndata(adata_with_patches)

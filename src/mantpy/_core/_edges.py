@@ -325,6 +325,8 @@ def build_cell_nx_graph(
         if edge_feat_fn is not None:
             eattrs["feat_fwd"] = edge_feat_fn(i, j, d)
             eattrs["feat_rev"] = edge_feat_fn(j, i, d)
+            eattrs["feat_source"] = f"cell_{i}"
+            eattrs["feat_target"] = f"cell_{j}"
         G.add_edge(f"cell_{i}", f"cell_{j}", **eattrs)
 
     return G
@@ -372,6 +374,7 @@ def build_ecm_nx_graph(
         features = [getattr(row, c) for c in feat_cols]
         attrs = {
             "node_type": NODE_TYPE_ECM,
+            "source_id": str(ecm_patches_df.index[i]),
             "x": float(row.x),
             "y": float(row.y),
             "ecm_cluster": int(row.ecm_cluster),
@@ -388,6 +391,8 @@ def build_ecm_nx_graph(
         if edge_feat_fn is not None:
             eattrs["feat_fwd"] = edge_feat_fn(i, j, d)
             eattrs["feat_rev"] = edge_feat_fn(j, i, d)
+            eattrs["feat_source"] = f"ecm_{i}"
+            eattrs["feat_target"] = f"ecm_{j}"
         G.add_edge(f"ecm_{i}", f"ecm_{j}", **eattrs)
 
     return G
@@ -507,6 +512,8 @@ def merge_cell_ecm_graphs(
             # in length, which is the normal case).
             eattrs["feat_fwd"] = edge_feat_fn(ci, ei, d, reverse=False)
             eattrs["feat_rev"] = edge_feat_fn(ci, ei, d, reverse=True)
+            eattrs["feat_source"] = cn
+            eattrs["feat_target"] = en
         G.add_edge(cn, en, **eattrs)
 
     return G

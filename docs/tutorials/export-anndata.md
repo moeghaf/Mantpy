@@ -54,6 +54,10 @@ ecm.var
 which channel it summarises. That matters once you have several extractors, as
 the column names alone stop being self-describing.
 
+`ecm.obs_names` preserves the source patch-table index as strings, including
+after filtering or reordering patches. Those converted identifiers must be
+unique. Coordinates, feature rows and identifiers retain the same row order.
+
 ## Standard tooling now applies
 
 Because it is an ordinary `AnnData`, the usual workflow works with no Mantpy
@@ -116,6 +120,35 @@ reloaded = ad.read_h5ad("cells.h5ad")
 print("obsp kept:", sorted(reloaded.obsp))
 print("uns kept :", sorted(reloaded.uns))
 ```
+
+## Linking patch annotations to SpatialData
+
+For several ROI images and their legacy patch tables,
+`mt.io.to_spatialdata({"roi_a": adata, ...})` creates:
+
+- an image named `roi_a`;
+- patch-centroid points named `roi_a_ecm_patches`, indexed by the original
+  patch identifiers converted to strings;
+- a combined `ecm_patches` table whose `region` and `instance_id` columns
+  link each row to its point instance. `sample_id` preserves the ROI name.
+
+The image and its points share the ROI's own coordinate system (`roi_a`).
+Different ROIs are not registered to a common coordinate system automatically.
+SpatialData annotation retrieval works through the points element, for example:
+
+```python
+import spatialdata as sd
+
+sdata = mt.io.to_spatialdata({"roi_a": adata})
+clusters = sd.get_values(
+    "ecm_cluster", sdata=sdata,
+    element_name="roi_a_ecm_patches", table_name="ecm_patches",
+)
+```
+
+This convenience export retains the images, patch features, annotations and
+centroids. It does not copy cell tables or graph layers. Centroid points
+represent patch locations rather than their square footprints.
 
 ```{code-cell} python
 :tags: [remove-cell]

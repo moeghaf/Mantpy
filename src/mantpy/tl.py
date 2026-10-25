@@ -613,6 +613,8 @@ def ecm_to_anndata(
         ``X`` = ``(n_patches, n_features)`` float32 matrix of patch features.
         ``obs`` = passthrough of non-feature columns (``ecm_cluster``,
         ``x``, ``y``, ...). ``ecm_cluster`` is cast to categorical.
+        ``obs_names`` preserves the source patch index, converted to strings;
+        the converted identifiers must be unique.
         ``obsm["spatial"]`` = ``(n_patches, 2)`` patch centroids.
         ``var_names`` = descriptive feature names from
         ``adata.uns["ecm_feature_names"]`` when available
@@ -635,8 +637,10 @@ def ecm_to_anndata(
     X = patch_df[feat_cols].to_numpy(dtype=np.float32, copy=True)
 
     obs_cols = [c for c in patch_df.columns if c not in feat_cols]
-    obs = patch_df[obs_cols].copy().reset_index(drop=True)
+    obs = patch_df[obs_cols].copy()
     obs.index = obs.index.astype(str)
+    if not obs.index.is_unique:
+        raise ValueError("Patch identifiers must be unique after conversion to strings.")
     if "ecm_cluster" in obs.columns:
         obs["ecm_cluster"] = obs["ecm_cluster"].astype("category")
 

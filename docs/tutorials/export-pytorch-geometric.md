@@ -78,8 +78,45 @@ print("node types:", hetero.node_types)
 print("edge types:", hetero.edge_types)
 ```
 
+Undirected edges produce both message-passing directions. Within-type relations
+contain reciprocal indices; cross edges appear in separate `cell-ecm` and
+`ecm-cell` relations. If a legacy graph carries directional edge features,
+each index column has its corresponding feature row. A relation may have no
+features, but incomplete feature rows raise an error. Set
+`include_edge_features=False` when only connectivity is needed.
+
+New graph builders record the `feat_source` and `feat_target` endpoints of each
+`feat_fwd` vector. This keeps directional features aligned even when NetworkX
+nodes are reordered. Older cross edges use the documented cell-to-ECM forward
+convention. For older within-type edges without endpoint metadata, the exporter
+assumes the NetworkX iteration order and warns when forward and reverse values
+differ. Rebuild these graphs before relying on their directional features.
+
 For most cell–ECM questions this is the better starting point. Reach for the
 homogeneous export when a model or baseline specifically requires one node type.
+
+## Mapping predictions back to their source
+
+`node_ids` records the NetworkX keys, and `source_ids` records the source
+observation or patch index saved by the graph builder. Both are strings in
+tensor-row order. When an externally constructed node has no `source_id`,
+its graph key is used instead. Heterogeneous exports keep the mappings on each
+node store:
+
+```{code-cell} python
+list(zip(hetero["ecm"].node_ids[:3], hetero["ecm"].source_ids[:3]))
+```
+
+Observation-native exports use observation names as `node_ids`, retaining
+`source_obs_name` as `source_ids` when available. Their node features come from
+the selected `X`/`obsm` matrix. Sparse joint graphs currently export connectivity,
+node features and positions without edge-feature tensors.
+
+The exports retain `graph_key` and `sample_id` when present; heterogeneous
+exports also record `graph_format`. Homogeneous exports support the explicit
+numeric graph label below and the legacy `islet_graph_feat` vector as
+`graph_feat`. Arbitrary graph attributes and `AnnData.uns` entries are not
+automatically serialized into PyG.
 
 ## Graph labels
 

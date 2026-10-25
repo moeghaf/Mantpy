@@ -39,6 +39,22 @@ and this project adheres to [Semantic Versioning][].
 
 ### Fixed
 
+- Legacy `mt.gr.to_hetero_pyg` now exports both directions of undirected
+  within-type edges and separate cell-to-ECM and ECM-to-cell relations, with
+  one correctly oriented feature row per edge. Previously feature tensors
+  had twice as many rows as edge indices and reverse directions were missing.
+  Partially missing feature vectors now raise a clear error. New graph builders
+  record directional endpoints; older within-type graphs without this metadata
+  warn when orientation is ambiguous and should be rebuilt.
+- `mt.io.to_spatialdata` now creates indexed patch-centroid points and links
+  the patch table to those instances, rather than incorrectly annotating image
+  elements. Images and points use separate ROI coordinate systems. The original
+  patch IDs remain available as `instance_id`, and the ROI as `sample_id`;
+  `region` now names the corresponding `"{sample_id}_ecm_patches"` points.
+- `mt.tl.ecm_to_anndata` preserves source patch indices as string observation
+  names. Legacy graph builders and PyG exports retain explicit source-ID
+  mappings. Observation-native `to_pyg` now attaches requested graph labels
+  and the documented graph metadata before returning, matching the legacy path.
 - `background_quantile=0` in `mt.pp.extract_ecm_patches` now retains the
   complete patch grid, including tied minimum-intensity patches. Earlier
   versions removed every patch at the minimum even when no background

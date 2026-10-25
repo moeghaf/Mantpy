@@ -565,22 +565,36 @@ def to_spatialdata(
     -------
     spatialdata.SpatialData
         A container with each ROI stored as ``sdata.images[sample_id]``. When
-        at least one ROI has ``adata.uns['ecm_patches']``, the concatenated
-        patch table is available as ``sdata.tables["ecm_patches"]``.
+        an ROI has a nonempty ``adata.uns['ecm_patches']``, its centroids are
+        indexed points in ``sdata.points[f"{sample_id}_ecm_patches"]``. The
+        concatenated ``sdata.tables["ecm_patches"]`` annotates those points
+        through ``obs["region"]`` and ``obs["instance_id"]``, preserving the
+        source patch index as a string. ``obs["sample_id"]`` identifies the ROI.
+        Images and their patch points share an ROI-specific coordinate system
+        named ``sample_id``; different ROIs are not assumed to be registered.
 
     Notes
     -----
+    This convenience export includes images, patch features/annotations and
+    patch-centroid points. It does not export cell tables, graph layers or
+    arbitrary ``uns`` entries. Point instances describe centroids, not patch
+    footprints. The patch index must be unique after conversion to strings.
+    ROI names must not collide with generated ``"{sample_id}_ecm_patches"``
+    element names.
+
     Requires the ``[spatial]`` optional dependency::
 
         pip install mantpy[spatial]
     """
     try:
         import spatialdata as sd
-        from spatialdata.models import Image2DModel
+        from spatialdata.models import Image2DModel, PointsModel
+        from spatialdata.transformations import Identity
     except ImportError as exc:
         raise ImportError("to_spatialdata requires spatialdata. Install with: pip install mantpy[spatial]") from exc
 
     images: dict = {}
+    points: dict = {}
     ecm_patch_frames: list[pd.DataFrame] = []
 
     for sid, adata in adatas.items():
@@ -598,11 +612,27 @@ def to_spatialdata(
         images[sid] = Image2DModel.parse(
             img_chw,
             dims=("c", "y", "x"),
+            transformations={sid: Identity()},
         )
 
         if "ecm_patches" in adata.uns:
             df = adata.uns["ecm_patches"].copy()
-            df["region"] = sid
+            if df.empty:
+                continue
+            element_name = f"{sid}_ecm_patches"
+            if element_name in adatas:
+                raise ValueError(f"ROI name {element_name!r} collides with the patch-points element for {sid!r}.")
+            source_ids = df.index.astype(str)
+            if not source_ids.is_unique:
+                raise ValueError(f"ROI {sid!r}: patch identifiers must be unique after conversion to strings.")
+            centroids = df[["x", "y"]].copy()
+            centroids.index = source_ids
+            # Sort points for known Dask divisions. Table rows remain in input
+            # order; consumers join them by instance ID, never by row position.
+            points[element_name] = PointsModel.parse(centroids.sort_index(), transformations={sid: Identity()})
+            df["instance_id"] = source_ids.to_numpy()
+            df["sample_id"] = sid
+            df["region"] = element_name
             ecm_patch_frames.append(df)
 
     tables: dict = {}
@@ -611,20 +641,10 @@ def to_spatialdata(
         n = len(combined)
         feat_cols = [c for c in combined.columns if c.startswith("feat_")]
         X = combined[feat_cols].values.astype(np.float32) if feat_cols else np.empty((n, 0), dtype=np.float32)
-        obs_df = pd.DataFrame(
-            {
-                "region": pd.Categorical(combined["region"].values),
-                "x": combined["x"].values,
-                "y": combined["y"].values,
-                "ecm_cluster": combined["ecm_cluster"].values,
-                # Row id within its own region. TableModel requires an
-                # instance_key whenever region_key is set, and the ids must be
-                # unique per region — a global RangeIndex would not be.
-                "instance_id": combined.groupby("region", sort=False).cumcount().values,
-            },
-            index=combined.index.astype(str),
-        )
-        patch_adata = ad.AnnData(X=X, obs=obs_df)
+        obs_df = combined.drop(columns=feat_cols).copy()
+        obs_df.index = obs_df.index.astype(str)
+        obs_df["region"] = pd.Categorical(obs_df["region"])
+        patch_adata = ad.AnnData(X=X, obs=obs_df, var=pd.DataFrame(index=feat_cols))
         # Patch centroids belong in obsm['spatial'], where squidpy and
         # scanpy look for coordinates — not only as obs columns.
         patch_adata.obsm["spatial"] = combined[["x", "y"]].to_numpy(dtype=np.float64)
@@ -637,7 +657,7 @@ def to_spatialdata(
             instance_key="instance_id",
         )
 
-    return sd.SpatialData(images=images, tables=tables)
+    return sd.SpatialData(images=images, points=points, tables=tables)
 
 
 def read_codex(

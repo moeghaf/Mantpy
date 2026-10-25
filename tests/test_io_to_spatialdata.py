@@ -74,7 +74,7 @@ def test_region_lists_only_rois_present_in_the_table():
     del cohort["roi2"].uns["ecm_patches"]
     sdata = mt.io.to_spatialdata(cohort)
     assert set(sdata.images) == {"roi1", "roi2", "roi3"}
-    assert sdata.tables["ecm_patches"].uns["spatialdata_attrs"]["region"] == ["roi1", "roi3"]
+    assert sdata.tables["ecm_patches"].uns["spatialdata_attrs"]["region"] == ["roi1_ecm_patches", "roi3_ecm_patches"]
 
 
 def test_no_patches_anywhere_yields_images_only():
@@ -113,3 +113,67 @@ def test_multichannel_uns_img_from_a_real_reader_survives_export():
     sdata = mt.io.to_spatialdata({"roi1": adata})
     # all three channels must survive; projecting to 2-D would be lossy
     assert sdata.images["roi1"].shape == (3, 16, 20)
+
+
+def _indexed_cohort():
+    cohort = _cohort(n=2, n_patches=3)
+    for offset, obj in enumerate(cohort.values()):
+        obj.uns["ecm_patches"] = pd.DataFrame(
+            {
+                "x": [10.0, 1.0, 15.0],
+                "y": [12.0, 2.0, 15.0],
+                "ecm_cluster": [offset + 1, offset + 3, offset + 5],
+                "feat_0": [11.0 + offset, 22.0 + offset, 33.0 + offset],
+            },
+            index=["patch:49", "patch:17", "patch:88"],
+        ).iloc[[0, 1]]
+    return cohort
+
+
+def test_point_instances_and_annotation_consumers_match_reordered_source_ids():
+    import spatialdata as sd
+    from spatialdata.transformations import get_transformation
+
+    cohort = _indexed_cohort()
+    sdata = mt.io.to_spatialdata(cohort)
+    for sid, obj in cohort.items():
+        element = f"{sid}_ecm_patches"
+        source = obj.uns["ecm_patches"]
+        assert set(sd.get_element_instances(sdata[element])) == set(source.index)
+        for column in ("ecm_cluster", "feat_0"):
+            values = sd.get_values(column, sdata=sdata, element_name=element, table_name="ecm_patches")
+            np.testing.assert_allclose(values.loc[source.index, column].values, source[column].values)
+        assert set(get_transformation(sdata[element], get_all=True)) == {sid}
+        assert set(get_transformation(sdata.images[sid], get_all=True)) == {sid}
+    assert sdata.tables["ecm_patches"].obs["instance_id"].tolist() == ["patch:49", "patch:17", "patch:49", "patch:17"]
+
+
+def test_spatial_query_and_zarr_round_trip_preserve_roi_patch_linkage(tmp_path):
+    import spatialdata as sd
+
+    source = mt.io.to_spatialdata(_indexed_cohort())
+    path = tmp_path / "cohort.zarr"
+    source.write(path)
+    restored = sd.read_zarr(path)
+    for sid in ("roi1", "roi2"):
+        values = sd.get_values(
+            "ecm_cluster", sdata=restored, element_name=f"{sid}_ecm_patches", table_name="ecm_patches"
+        )
+        assert set(values.index) == {"patch:17", "patch:49"}
+    selected = sd.bounding_box_query(
+        restored,
+        axes=("x", "y"),
+        min_coordinate=[0, 0],
+        max_coordinate=[5, 5],
+        target_coordinate_system="roi1",
+    )
+    assert set(selected.points) == {"roi1_ecm_patches"}
+    assert selected.tables["ecm_patches"].obs["instance_id"].tolist() == ["patch:17"]
+    assert selected.tables["ecm_patches"].obs["sample_id"].tolist() == ["roi1"]
+
+
+def test_duplicate_patch_ids_fail_before_creating_an_ambiguous_annotation():
+    cohort = _indexed_cohort()
+    cohort["roi1"].uns["ecm_patches"].index = ["same", "same"]
+    with pytest.raises(ValueError, match="patch identifiers must be unique"):
+        mt.io.to_spatialdata(cohort)

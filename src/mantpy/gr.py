@@ -721,7 +721,7 @@ def build_cell_graph(
     adata.obsp[key_added] = adj
     _publish_spatial_connectivities(adata, adj, adopted_from=connectivity_key)
 
-    extra_attrs: dict[str, np.ndarray] = {}
+    extra_attrs: dict[str, np.ndarray] = {"source_id": adata.obs_names.astype(str).to_numpy()}
     if node_features:
         for feat in node_features:
             if feat in adata.obs.columns:
@@ -2219,6 +2219,62 @@ def largest_component_radius_reconnect(
     return max(records, key=lambda r: r["n_nodes"])
 
 
+def _legacy_edge_features(
+    graph: nx.Graph, u: Any, v: Any, attributes: Mapping[str, Any]
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Resolve stored features to the requested u→v and v→u orientations."""
+    forward, reverse = attributes.get("feat_fwd"), attributes.get("feat_rev")
+    if forward is None and reverse is None:
+        return None, None
+    if forward is None or reverse is None:
+        raise ValueError(f"Edge {(u, v)!r} must provide both feat_fwd and feat_rev, or neither.")
+    forward = np.asarray(forward, dtype=np.float32)
+    reverse = np.asarray(reverse, dtype=np.float32)
+    if forward.ndim != 1 or forward.shape != reverse.shape:
+        raise ValueError(f"Edge {(u, v)!r} must have equal-length, one-dimensional feature vectors.")
+    source, target = attributes.get("feat_source"), attributes.get("feat_target")
+    if source is not None or target is not None:
+        if (source, target) == (u, v):
+            return forward, reverse
+        if (source, target) == (v, u):
+            return reverse, forward
+        raise ValueError(f"Edge {(u, v)!r} has feat_source/feat_target that do not match its endpoints.")
+    # Older Mantpy cross edges explicitly define forward as cell→ECM.
+    u_type, v_type = graph.nodes[u].get("node_type"), graph.nodes[v].get("node_type")
+    if {u_type, v_type} == {NODE_TYPE_CELL, NODE_TYPE_ECM}:
+        return (forward, reverse) if u_type == NODE_TYPE_CELL else (reverse, forward)
+    if not np.array_equal(forward, reverse):
+        warnings.warn(
+            "Directional edge features have no feat_source/feat_target metadata; assuming feat_fwd "
+            "follows NetworkX edge iteration. Rebuild the graph or record the original endpoints "
+            "to guarantee orientation after node reordering.",
+            UserWarning,
+            stacklevel=3,
+        )
+    return forward, reverse
+
+
+def _add_pyg_graph_fields(data: Any, adata: AnnData, *, graph_key: str, label_key: str | None, torch: Any) -> None:
+    """Attach only the documented graph metadata and optional numeric label."""
+    data.graph_key = graph_key
+    if "sample_id" in adata.uns:
+        data.sample_id = str(adata.uns["sample_id"])
+    if "islet_graph_feat" in adata.uns:
+        gf = np.asarray(adata.uns["islet_graph_feat"], dtype=np.float32)
+        data.graph_feat = torch.tensor(gf.reshape(1, -1), dtype=torch.float32)
+    if label_key is not None:
+        if label_key not in adata.obs.columns:
+            raise KeyError(f"obs[{label_key!r}] is required when `label_key` is given.")
+        labels = pd.unique(adata.obs[label_key])
+        if len(labels) != 1:
+            raise ValueError(
+                f"obs[{label_key!r}] must hold a single per-graph label; found {len(labels)} distinct values."
+            )
+        data.y = torch.tensor(int(labels[0]), dtype=torch.long)
+    elif "label" in adata.uns:
+        data.y = torch.tensor(int(adata.uns["label"]), dtype=torch.long)
+
+
 def to_pyg(
     adata: AnnData,
     *,
@@ -2230,8 +2286,7 @@ def to_pyg(
 ):
     """Convert a Mantpy graph to a PyTorch Geometric ``Data`` object.
 
-    Exports whatever features are stored on nodes and edges — no hard-coded
-    assumptions. For observation-native patch graphs, ``x`` is the selected
+    For observation-native patch graphs, ``x`` is the selected
     ``X``/``obsm`` representation and coordinates are stored separately in
     ``pos``. For legacy NetworkX graphs, node features are built from:
 
@@ -2243,6 +2298,11 @@ def to_pyg(
     Edge features (``edge_attr``) are included only when edges carry ``feat_fwd``
     / ``feat_rev`` attributes, which are added by passing ``edge_features=...``
     to the graph builder.  Both directed orientations are emitted.
+    New graph builders record ``feat_source``/``feat_target`` to preserve
+    directional features independently of NetworkX node order. For older
+    within-type edges without this metadata, forward follows edge iteration
+    order (with a warning if the two vectors differ); rebuild such graphs
+    to recover guaranteed orientation. Legacy cell–ECM forward means cell→ECM.
 
     Parameters
     ----------
@@ -2273,6 +2333,13 @@ def to_pyg(
 
     Notes
     -----
+    ``node_ids`` contains string observation names or NetworkX node keys in
+    tensor-row order; ``source_ids`` retains builder-recorded source observation
+    or patch IDs (falling back to ``node_ids``). Supported graph metadata is
+    ``graph_key``, ``sample_id`` when present, the optional label, and the legacy
+    ``islet_graph_feat`` numeric vector as ``graph_feat``. Arbitrary NetworkX
+    attributes and ``uns`` entries are not copied.
+
     For heterogeneous cell+ECM graphs use :func:`to_hetero_pyg`.
     Requires the ``[gnn]`` optional dependency: ``pip install mantpy[gnn]``.
     """
@@ -2318,7 +2385,10 @@ def to_pyg(
         if include_edge_features and "edge_attr" in direct_graph:
             data.edge_attr = torch.tensor(np.asarray(direct_graph["edge_attr"], dtype=np.float32))
         data.obs_names = list(map(str, adata.obs_names))
+        data.node_ids = data.obs_names
+        data.source_ids = list(map(str, adata.obs.get("source_obs_name", adata.obs_names)))
         data.node_feature_key = node_feature_key or "X"
+        _add_pyg_graph_fields(data, adata, graph_key=graph_key, label_key=label_key, torch=torch)
         return data
 
     if graph_key not in adata.uns:
@@ -2366,14 +2436,18 @@ def to_pyg(
         ui, vi = node_idx[u], node_idx[v]
         src_list += [ui, vi]
         dst_list += [vi, ui]
-        if include_edge_features and "feat_fwd" in edata:
-            feat_fwd_list.append(np.asarray(edata["feat_fwd"], dtype=np.float32))
-            feat_rev_list.append(np.asarray(edata["feat_rev"], dtype=np.float32))
-            has_edge_feat = True
+        if include_edge_features:
+            forward, reverse = _legacy_edge_features(G, u, v, edata)
+            if forward is not None:
+                feat_fwd_list.append(forward)
+                feat_rev_list.append(reverse)
+                has_edge_feat = True
 
     ei = torch.tensor([src_list, dst_list], dtype=torch.long) if src_list else torch.empty((2, 0), dtype=torch.long)
 
     data = Data(x=x, edge_index=ei, pos=pos)
+    data.node_ids = [str(n) for n, _ in nodes_list]
+    data.source_ids = [str(d.get("source_id", n)) for n, d in nodes_list]
 
     if include_edge_features and has_edge_feat and len(feat_fwd_list) == len(src_list) // 2:
         combined = []
@@ -2382,25 +2456,7 @@ def to_pyg(
             combined.append(r)
         data.edge_attr = torch.tensor(np.stack(combined), dtype=torch.float32)
 
-    # ---- optional islet-classifier fields (only populated when present) ------
-    if "islet_graph_feat" in adata.uns:
-        gf = np.asarray(adata.uns["islet_graph_feat"], dtype=np.float32)
-        data.graph_feat = torch.tensor(gf.reshape(1, -1), dtype=torch.float32)
-
-    # `obs["y"]` is deliberately NOT consulted here: Y_COL is "y", so read_imc
-    # writes the y-centroid there and every graph would otherwise be labelled
-    # with a truncated coordinate. Labels must be named explicitly.
-    if label_key is not None:
-        if label_key not in adata.obs.columns:
-            raise KeyError(f"obs[{label_key!r}] is required when `label_key` is given.")
-        labels = pd.unique(adata.obs[label_key])
-        if len(labels) != 1:
-            raise ValueError(
-                f"obs[{label_key!r}] must hold a single per-graph label; found {len(labels)} distinct values."
-            )
-        data.y = torch.tensor(int(labels[0]), dtype=torch.long)
-    elif "label" in adata.uns:
-        data.y = torch.tensor(int(adata.uns["label"]), dtype=torch.long)
+    _add_pyg_graph_fields(data, adata, graph_key=graph_key, label_key=label_key, torch=torch)
 
     return data
 
@@ -2417,8 +2473,10 @@ def to_hetero_pyg(
     Separates nodes into ``'cell'`` and ``'ecm'`` types with their own feature
     tensors, and builds separate ``edge_index`` (and ``edge_attr`` when present)
     for each edge type:
-    ``('cell', 'cell-cell', 'cell')``, ``('ecm', 'ecm-ecm', 'ecm')``, and
-    ``('cell', 'cell-ecm', 'ecm')``.
+    ``('cell', 'cell-cell', 'cell')``, ``('ecm', 'ecm-ecm', 'ecm')``,
+    ``('cell', 'cell-ecm', 'ecm')`` and ``('ecm', 'ecm-cell', 'cell')``.
+    An undirected source edge is exported in both directions, with one
+    correctly oriented feature row per directed edge.
 
     Node features follow the same auto-detection logic as :func:`to_pyg`:
     ``[x, y]`` + ``ecm_features`` (ECM nodes only) + topology attrs if present.
@@ -2432,7 +2490,18 @@ def to_hetero_pyg(
         as ``{"cell": "X_cell", "ecm": "X_ecm"}`` selects them separately.
         Legacy NetworkX export retains its historical automatic node features.
     include_edge_features
-        Whether to include ``edge_attr`` tensors when edge features are stored.
+        Whether to include ``edge_attr`` tensors on legacy NetworkX relations.
+        A relation can omit features entirely; partially missing or inconsistent
+        vectors raise ``ValueError`` rather than silently misaligning tensors.
+        Sparse observation-native joint graphs currently export connectivity,
+        selected node features and positions, without edge-feature tensors.
+
+    Notes
+    -----
+    Each node store includes ``pos``, ``node_ids`` and ``source_ids`` in tensor
+    order. Graph metadata is limited to ``graph_key``, ``graph_format`` and
+    ``sample_id`` when supplied; arbitrary NetworkX metadata is not copied.
+    Legacy directional-feature conventions are described in :func:`to_pyg`.
 
     Requires the ``[gnn]`` optional dependency: ``pip install mantpy[gnn]``.
     """
@@ -2449,17 +2518,23 @@ def to_hetero_pyg(
 
     graph_object = adata.uns[graph_key]
     if _is_sparse_joint_graph(adata, graph_object):
-        return _sparse_joint_to_hetero_pyg(
+        data = _sparse_joint_to_hetero_pyg(
             adata,
             graph_object,
             node_feature_key=node_feature_key,
             HeteroData=HeteroData,
             torch=torch,
         )
+        data.graph_key = graph_key
+        if "sample_id" in adata.uns:
+            data.sample_id = str(adata.uns["sample_id"])
+        return data
     if node_feature_key is not None:
         raise ValueError("node_feature_key is only supported for sparse observation-native joint graphs.")
 
     G: nx.Graph = graph_object
+    if G.is_directed() or G.is_multigraph():
+        raise ValueError("Legacy to_hetero_pyg requires an undirected simple NetworkX graph.")
 
     cell_nodes = [(n, d) for n, d in G.nodes(data=True) if d.get("node_type") == NODE_TYPE_CELL]
     ecm_nodes = [(n, d) for n, d in G.nodes(data=True) if d.get("node_type") == NODE_TYPE_ECM]
@@ -2483,68 +2558,55 @@ def to_hetero_pyg(
         return torch.tensor(padded, dtype=torch.float32)
 
     data = HeteroData()
-    data["cell"].x = _node_feats(cell_nodes)
-    data["ecm"].x = _node_feats(ecm_nodes)
+    for kind, nodes in (("cell", cell_nodes), ("ecm", ecm_nodes)):
+        data[kind].x = _node_feats(nodes)
+        data[kind].pos = torch.tensor(
+            [[d.get("x", 0.0), d.get("y", 0.0)] for _, d in nodes], dtype=torch.float32
+        ).reshape(-1, 2)
+        data[kind].node_ids = [str(n) for n, _ in nodes]
+        data[kind].source_ids = [str(d.get("source_id", n)) for n, d in nodes]
 
-    cc_src, cc_dst, cc_feat_fwd, cc_feat_rev = [], [], [], []
-    ee_src, ee_dst, ee_feat_fwd, ee_feat_rev = [], [], [], []
-    ce_src, ce_dst, ce_feat_fwd, ce_feat_rev = [], [], [], []
+    relations = {
+        ("cell", "cell-cell", "cell"): [],
+        ("ecm", "ecm-ecm", "ecm"): [],
+        ("cell", "cell-ecm", "ecm"): [],
+        ("ecm", "ecm-cell", "cell"): [],
+    }
 
     for u, v, edata in G.edges(data=True):
-        etype = edata.get("edge_type", "")
-        f_fwd = np.asarray(edata["feat_fwd"], dtype=np.float32) if "feat_fwd" in edata else None
-        f_rev = np.asarray(edata["feat_rev"], dtype=np.float32) if "feat_rev" in edata else None
+        forward, reverse = _legacy_edge_features(G, u, v, edata) if include_edge_features else (None, None)
+        if u in cell_idx and v in cell_idx:
+            rows = relations["cell", "cell-cell", "cell"]
+            rows.extend([(cell_idx[u], cell_idx[v], forward), (cell_idx[v], cell_idx[u], reverse)])
+        elif u in ecm_idx and v in ecm_idx:
+            rows = relations["ecm", "ecm-ecm", "ecm"]
+            rows.extend([(ecm_idx[u], ecm_idx[v], forward), (ecm_idx[v], ecm_idx[u], reverse)])
+        elif (u in cell_idx and v in ecm_idx) or (v in cell_idx and u in ecm_idx):
+            if u in cell_idx:
+                c, e, ce_feature, ec_feature = u, v, forward, reverse
+            else:
+                c, e, ce_feature, ec_feature = v, u, reverse, forward
+            relations["cell", "cell-ecm", "ecm"].append((cell_idx[c], ecm_idx[e], ce_feature))
+            relations["ecm", "ecm-cell", "cell"].append((ecm_idx[e], cell_idx[c], ec_feature))
+        else:
+            raise ValueError(f"Edge {(u, v)!r} contains a node without node_type='cell' or 'ecm'.")
 
-        if etype == "cell-cell":
-            if u in cell_idx and v in cell_idx:
-                cc_src.append(cell_idx[u])
-                cc_dst.append(cell_idx[v])
-                if f_fwd is not None:
-                    cc_feat_fwd.append(f_fwd)
-                    cc_feat_rev.append(f_rev)
-        elif etype == "ecm-ecm":
-            if u in ecm_idx and v in ecm_idx:
-                ee_src.append(ecm_idx[u])
-                ee_dst.append(ecm_idx[v])
-                if f_fwd is not None:
-                    ee_feat_fwd.append(f_fwd)
-                    ee_feat_rev.append(f_rev)
-        elif etype == "cell-ecm":
-            c_node, e_node = (u, v) if u in cell_idx else (v, u)
-            if c_node in cell_idx and e_node in ecm_idx:
-                ce_src.append(cell_idx[c_node])
-                ce_dst.append(ecm_idx[e_node])
-                if f_fwd is not None:
-                    ce_feat_fwd.append(f_fwd)
-                    ce_feat_rev.append(f_rev)
+    for relation, rows in relations.items():
+        data[relation].edge_index = (
+            torch.tensor([[r[0] for r in rows], [r[1] for r in rows]], dtype=torch.long)
+            if rows
+            else torch.empty((2, 0), dtype=torch.long)
+        )
+        features = [r[2] for r in rows]
+        if any(f is not None for f in features):
+            if any(f is None for f in features) or len({f.shape for f in features}) != 1:
+                raise ValueError(f"Relation {relation!r} has missing or inconsistent edge features.")
+            data[relation].edge_attr = torch.tensor(np.stack(features), dtype=torch.float32)
 
-    def _ei(src: list, dst: list) -> torch.Tensor:
-        if not src:
-            return torch.empty((2, 0), dtype=torch.long)
-        return torch.tensor([src, dst], dtype=torch.long)
-
-    def _ea(fwd: list, rev: list) -> torch.Tensor | None:
-        if not include_edge_features or not fwd:
-            return None
-        combined = []
-        for f, r in zip(fwd, rev, strict=False):
-            combined.append(f)
-            combined.append(r)
-        return torch.tensor(np.stack(combined), dtype=torch.float32)
-
-    data["cell", "cell-cell", "cell"].edge_index = _ei(cc_src, cc_dst)
-    data["ecm", "ecm-ecm", "ecm"].edge_index = _ei(ee_src, ee_dst)
-    data["cell", "cell-ecm", "ecm"].edge_index = _ei(ce_src, ce_dst)
-
-    for rel, fwd, rev in [
-        (("cell", "cell-cell", "cell"), cc_feat_fwd, cc_feat_rev),
-        (("ecm", "ecm-ecm", "ecm"), ee_feat_fwd, ee_feat_rev),
-        (("cell", "cell-ecm", "ecm"), ce_feat_fwd, ce_feat_rev),
-    ]:
-        ea = _ea(fwd, rev)
-        if ea is not None:
-            data[rel].edge_attr = ea
-
+    data.graph_key = graph_key
+    data.graph_format = "networkx"
+    if "sample_id" in adata.uns:
+        data.sample_id = str(adata.uns["sample_id"])
     return data
 
 
@@ -2612,6 +2674,13 @@ def _sparse_joint_to_hetero_pyg(
     data[NODE_TYPE_ECM].pos = torch.as_tensor(position[ecm_mask], dtype=torch.float32)
     data[NODE_TYPE_ECM].obs_names = list(map(str, adata.obs_names[ecm_mask]))
     data[NODE_TYPE_ECM].node_feature_key = ecm_feature_key
+    for kind, mask in ((NODE_TYPE_CELL, cell_mask), (NODE_TYPE_ECM, ecm_mask)):
+        data[kind].node_ids = data[kind].obs_names
+        data[kind].source_ids = (
+            list(map(str, adata.obs.loc[mask, "source_obs_name"]))
+            if ("source_obs_name" in adata.obs)
+            else data[kind].node_ids
+        )
 
     cc = (NODE_TYPE_CELL, "cell-cell", NODE_TYPE_CELL)
     ee = (NODE_TYPE_ECM, "ecm-ecm", NODE_TYPE_ECM)

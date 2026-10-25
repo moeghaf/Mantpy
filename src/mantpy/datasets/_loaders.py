@@ -413,6 +413,9 @@ def schistosoma_ecm(
     -----
     Mantpy prints the dataset citation after the first successful archive
     download. Cached and local-mirror loads remain quiet.
+    ``historical_best_k`` preserves the archive's earlier cluster-count
+    metadata when present. It is not a cluster-count recommendation for the
+    current paper; the loader does not select clusters.
     """
     from mantpy.im import as_image_container
     from mantpy.io import read_imc_folder
@@ -478,7 +481,7 @@ def schistosoma_ecm(
         if isinstance(order, list):
             sample_meta[column] = pd.Categorical(sample_meta[column], categories=order, ordered=True)
 
-    best_k = int(settings.get("best_k", 7))
+    historical_k = settings.get("historical_best_k", settings.get("best_k"))
     bundle_result = Bunch(
         raw_adatas=raw_adatas,
         images=images,
@@ -489,7 +492,7 @@ def schistosoma_ecm(
         group_order=group_order,
         adatas=raw_adatas,
         reference_adatas=raw_adatas,
-        best_k=best_k,
+        historical_best_k=None if historical_k is None else int(historical_k),
         preprocessing=dict(settings.get("preprocessing", {})),
         paths=bundle.public_paths(),
         provenance=_provenance(bundle),

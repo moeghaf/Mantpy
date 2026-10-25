@@ -859,8 +859,9 @@ def extract_ecm_patches(
         Outputs from all extractors are concatenated to form the feature vector.
         Example: ``features=["mean", "coherence"]``
     background_quantile
-        Patches whose mean intensity falls below this quantile are discarded as
-        background.  Only used when ``min_signal_fraction`` is ``None``.
+        ``0`` retains the complete patch grid. At a positive quantile, patches
+        whose mean intensity is at or below the threshold are discarded as
+        background. Only used when ``min_signal_fraction`` is ``None``.
     min_signal_fraction
         If set, uses adaptive thresholding (Li or Otsu) on the image to
         determine a signal cutoff, then discards patches where fewer than this
@@ -1176,9 +1177,7 @@ class ECMLeidenResolutionSelection:
     versions: Mapping[str, str]
 
     def __repr__(self) -> str:
-        selected = self.table.loc[
-            np.isclose(self.table["resolution"], self.selected_resolution)
-        ].iloc[0]
+        selected = self.table.loc[np.isclose(self.table["resolution"], self.selected_resolution)].iloc[0]
         return "\n".join(
             [
                 "ECM Leiden resolution selection",
@@ -1539,9 +1538,7 @@ def extract_ecm_patches_cohort(
         missing_adatas = sorted(set(images) - set(adatas))
         raise ValueError(f"Cohort keys differ; missing images={missing_images}, missing AnnData={missing_adatas}.")
     if normalize not in {"pooled_zscore", "pooled_arcsinh_percentile", "none"}:
-        raise ValueError(
-            "normalize must be 'pooled_zscore', 'pooled_arcsinh_percentile', or 'none'."
-        )
+        raise ValueError("normalize must be 'pooled_zscore', 'pooled_arcsinh_percentile', or 'none'.")
     if "features" not in extract_kwargs:
         raise TypeError("extract_ecm_patches_cohort requires features=[...].")
     if normalization_chunk_size < 1:
@@ -1578,9 +1575,7 @@ def extract_ecm_patches_cohort(
     n_channels = next(iter(channel_counts))
     for sample, adata in adatas.items():
         if adata.n_vars != n_channels:
-            raise ValueError(
-                f"Sample {sample!r} has {adata.n_vars} variables but its image has {n_channels} channels."
-            )
+            raise ValueError(f"Sample {sample!r} has {adata.n_vars} variables but its image has {n_channels} channels.")
 
     scaler: Any | None = None
     if normalize == "pooled_zscore":
@@ -1610,9 +1605,7 @@ def extract_ecm_patches_cohort(
             names = tuple(map(str, adata.var_names))
             if names != reference_names:
                 raise ValueError(f"Sample {sample!r} has a different marker order.")
-            if "is_ecm" not in adata.var or not np.array_equal(
-                adata.var["is_ecm"].to_numpy(dtype=bool), reference_ecm
-            ):
+            if "is_ecm" not in adata.var or not np.array_equal(adata.var["is_ecm"].to_numpy(dtype=bool), reference_ecm):
                 raise ValueError(f"Sample {sample!r} has a different ECM-marker mask.")
 
         total_pixels = sum(shape[1] * shape[2] for shape in image_shapes.values())
@@ -1947,12 +1940,8 @@ def select_ecm_leiden_resolution(
     table = pd.DataFrame(rows)
     valid = table.loc[np.isfinite(table["calinski_harabasz"])].copy()
     if valid.empty:
-        raise ValueError(
-            "No candidate resolution produced a partition with a finite Calinski-Harabasz score."
-        )
-    selected = valid.sort_values(
-        ["calinski_harabasz", "resolution"], ascending=[False, True]
-    ).iloc[0]
+        raise ValueError("No candidate resolution produced a partition with a finite Calinski-Harabasz score.")
+    selected = valid.sort_values(["calinski_harabasz", "resolution"], ascending=[False, True]).iloc[0]
 
     from mantpy._version import __version__
 
@@ -2064,8 +2053,7 @@ def cluster_ecm_patches(
         if mean_feature_indices:
             raw_means = pooled[active][:, mean_feature_indices]
             component_means = tuple(
-                float(raw_means[selected_labels == component].mean())
-                for component in range(observed_n_clusters)
+                float(raw_means[selected_labels == component].mean()) for component in range(observed_n_clusters)
             )
         else:
             component_means = tuple(float(value) for value in model.cluster_centers_.mean(axis=1))
@@ -2118,22 +2106,16 @@ def cluster_ecm_patches(
         if mean_feature_indices:
             raw_for_means = raw_for_means[:, mean_feature_indices]
         component_means = tuple(
-            float(raw_for_means[selected_labels == component].mean())
-            for component in range(observed_n_clusters)
+            float(raw_for_means[selected_labels == component].mean()) for component in range(observed_n_clusters)
         )
         model = None
 
     labels = np.full(len(pooled), -1, dtype=np.int32)
     labels[active] = selected_labels
     unique_labels, label_counts = np.unique(labels, return_counts=True)
-    cluster_counts = tuple(
-        (int(label), int(count))
-        for label, count in zip(unique_labels, label_counts, strict=True)
-    )
+    cluster_counts = tuple((int(label), int(count)) for label, count in zip(unique_labels, label_counts, strict=True))
     counts_by_label = dict(cluster_counts)
-    component_sizes = tuple(
-        counts_by_label.get(component, 0) for component in range(observed_n_clusters)
-    )
+    component_sizes = tuple(counts_by_label.get(component, 0) for component in range(observed_n_clusters))
 
     from mantpy._version import __version__
 
@@ -3513,12 +3495,7 @@ def segment_cells_tiled(
                 cy = np.asarray(props["centroid-0"], dtype=float)
                 cx = np.asarray(props["centroid-1"], dtype=float)
                 area = np.asarray(props["area"], dtype=float)
-                owned = (
-                    (cy >= inner_y0)
-                    & (cy < inner_y1)
-                    & (cx >= inner_x0)
-                    & (cx < inner_x1)
-                )
+                owned = (cy >= inner_y0) & (cy < inner_y1) & (cx >= inner_x0) & (cx < inner_x1)
                 if owned.any():
                     xy = np.column_stack((x0 + cx[owned], y0 + cy[owned])) * float(downsample)
                     centroids.append(xy.astype(np.float32))
@@ -3648,7 +3625,8 @@ def _compute_islet_graph_feat_11d(
 
         edge_set: set[tuple[int, int]] = set()
         for i, nbrs in enumerate(indices):
-            for j in nbrs[1:]:
+            # Keep up to three other identities, including when ties omit self.
+            for j in nbrs[nbrs != i][: k_nn - 1]:
                 edge_set.add((min(i, j), max(i, j)))
 
         # Connected components via union-find

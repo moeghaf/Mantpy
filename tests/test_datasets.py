@@ -181,7 +181,7 @@ def test_lung_loader_normalizes_channel_last_tiff(tmp_path):
     np.testing.assert_array_equal(data.images["roi_001"][0], image[..., 0])
 
 
-def test_schistosoma_loader_reads_manifested_channel_folders(tmp_path):
+def test_schistosoma_loader_reads_manifested_channel_folders(tmp_path, capsys):
     samples = ["roi_001", "roi_002"]
     panel = pd.DataFrame(
         {
@@ -217,13 +217,15 @@ def test_schistosoma_loader_reads_manifested_channel_folders(tmp_path):
     manifest["metadata"] = {"best_k": 7, "group_order": ["Naive_WT", "Infected_KO"]}
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    data = mt.datasets.schistosoma_ecm(source_dir=tmp_path, progressbar=False, verbose=False)
+    data = mt.datasets.schistosoma_ecm(source_dir=tmp_path, progressbar=False, verbose=True)
 
     assert list(data.raw_adatas) == samples
     assert data.images["roi_001"].shape == (2, 4, 5)
     assert data.ecm_names == ["Collagen", "Laminin"]
     assert data.group_order == ["Naive_WT", "Infected_KO"]
-    assert data.best_k == 7
+    assert "K = " not in capsys.readouterr().out
+    assert data.historical_best_k == 7
+    assert "best_k" not in data
 
 
 def _archive_bytes(files: dict[str, bytes]) -> bytes:
@@ -363,7 +365,7 @@ def test_pooch_downloads_once_then_reuses_verified_cache(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("dataset", "doi"),
     [
-        ("coliv_intestine", "HBM893.MCGS.487"),
+        ("coliv_intestine", "HBM926.SHNZ.594"),
         ("balbc_pbs_lung", "10.1038/s44320-026-00234-5"),
         ("schistosoma_ecm", "10.1371/journal.ppat.1012928"),
         ("prostate_he_visium", "human-prostate-cancer-adenocarcinoma"),
@@ -513,17 +515,12 @@ def test_download_and_lazy_image_dependencies_are_direct_runtime_requirements():
     # dropped xarray-schema, whose module-scope `pkg_resources` import fails on
     # setuptools >=82. Dropping below that floor would reintroduce the need for
     # a `setuptools<82` cap on every downstream consumer.
-    assert not any(
-        requirement.specifier.contains("1.8.1") for requirement in by_name["squidpy"]
-    )
+    assert not any(requirement.specifier.contains("1.8.1") for requirement in by_name["squidpy"])
     assert "setuptools" not in by_name
 
 
 def test_fetch_compatibility_wrappers_delegate_to_canonical_loaders(tmp_path, monkeypatch):
-    sentinels = {
-        name: object()
-        for name in ("coliv_intestine", "balbc_pbs_lung", "schistosoma_ecm")
-    }
+    sentinels = {name: object() for name in ("coliv_intestine", "balbc_pbs_lung", "schistosoma_ecm")}
     calls: list[tuple[str, dict[str, object]]] = []
 
     for name, sentinel in sentinels.items():

@@ -34,7 +34,7 @@ roi = mt.datasets.toy_ecm_roi()
 roi.image.shape, roi.image.dtype
 ```
 
-Three pieces come back, matching what the real loaders return:
+Three pieces come back from this synthetic single-ROI loader:
 
 ```{code-cell} python
 roi.panel
@@ -99,15 +99,17 @@ blobs on the cell coordinates. That structure is what the next page clusters.
 
 ## Using a real dataset instead
 
-Every loader in {mod}`mantpy.datasets` returns the same shape, so moving to real
-data is a one-line change:
+The real loaders in {mod}`mantpy.datasets` return dataset-specific bundles:
 
 ```python
 data = mt.datasets.coliv_intestine()   # downloads ~93 MB on first call, then caches
 ```
 
 Downloads are checksummed against an immutable Zenodo record and cached outside
-the package. Set `MANTPY_CACHE` to control where.
+the package. Set `MANTPY_CACHE` to control where. The intestine bundle is an
+ECM-only image dataset, and the lung and liver bundles contain multiple ROIs.
+Use the dataset-specific paper notebooks for their image panels, metadata and
+analysis settings; they do not have the same fields as `toy_ecm_roi()`.
 
 ## Next
 

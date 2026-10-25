@@ -37,6 +37,16 @@ Each returned bundle has:
 - `provenance`: portable public source and licence metadata;
 - `quickstart`: verified optional intermediates as `pathlib.Path` values.
 
+Dataset-specific fields differ: the synthetic ROI has `image`, `panel` and
+`cells`, whereas the real cohorts may have multiple `images`, ROI metadata
+and ECM-only channel folders. Inspect the returned fields or use the paper's
+dataset-specific notebook rather than substituting a cohort into the
+single-ROI toy example.
+
+`schistosoma_ecm().historical_best_k` is metadata from the original archive.
+It is not a recommended K and is separate from the current paper's frozen
+K=6 liver partition.
+
 Quick-start files are never silently substituted for raw data. Tutorials choose
 whether to use them, validate their scientific metadata, and otherwise run the
 full workflow from the raw inputs.

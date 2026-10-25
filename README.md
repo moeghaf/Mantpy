@@ -24,7 +24,9 @@ Scanpy, Squidpy, and other single-cell and spatial tools.
 
 ## Installation
 
-Mantpy requires Python 3.11 or newer.
+Mantpy requires Python 3.11 or newer. CPU workflows run on Windows, Linux and
+macOS. GPU training additionally requires a compatible PyTorch installation;
+the package does not require a GPU for graph construction or descriptive analysis.
 
 ```bash
 pip install mantpy
@@ -41,8 +43,8 @@ pip install "mantpy[segment]"  # Cellpose segmentation
 
 ## Quick start
 
-This runs as written — `toy_ecm_roi` synthesises a small region of interest in
-memory, so there is nothing to download:
+`toy_ecm_roi` synthesises a small region of interest in memory, so there is
+nothing to download:
 
 ```python
 import mantpy as mt
@@ -99,9 +101,10 @@ Step-by-step guides, each executed when the documentation is built:
 - [Exporting to AnnData](https://mantpy.readthedocs.io/en/latest/tutorials/export-anndata.html)
 - [Exporting to PyTorch Geometric](https://mantpy.readthedocs.io/en/latest/tutorials/export-pytorch-geometric.html)
 
-The full analyses behind the [preprint][] run on real cohorts in the
-[reproducibility repository][tutorials]; the intestine and lung workflows
-open directly in Colab.
+The full analyses behind the [preprint][] use real cohorts in the
+[reproducibility repository][tutorials]. Follow its pinned review-candidate
+installation and input instructions; the current paper notebooks have been
+checked on Windows CPU, with Colab execution still unvalidated.
 
 ## Public datasets
 
@@ -114,10 +117,17 @@ lung = mt.datasets.balbc_pbs_lung()         #  71 MB
 liver = mt.datasets.schistosoma_ecm()       #  38 MB
 ```
 
-Every loader returns the same `Bunch` shape as `toy_ecm_roi`, so moving an
-example from synthetic to real data is a one-line change. The bundles are frozen
+Loaders return a `Bunch` with the files, images, metadata and provenance
+available for that dataset. The synthetic single-ROI example and the real
+cohorts have different contents; see the
+[dataset documentation](https://mantpy.readthedocs.io/en/latest/datasets.html)
+and paper notebooks for the appropriate workflow. The bundles are frozen
 under CC BY 4.0 in an immutable
 [Zenodo record](https://doi.org/10.5281/zenodo.21538382).
+
+The liver archive's `historical_best_k` describes its older analysis metadata.
+The current paper notebooks use their documented frozen K=6 partition; the
+loader does not recommend or fit a cluster count.
 
 ## Documentation
 

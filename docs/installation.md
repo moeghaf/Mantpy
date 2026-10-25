@@ -1,6 +1,9 @@
 # Installation
 
 Mantpy requires **Python 3.11 or newer**.
+Graph construction and descriptive analysis run on a CPU. For optional GPU
+training, install a PyTorch build compatible with the operating system,
+graphics driver and device; CUDA is not required for the CPU workflows.
 
 ## Stable release
 
@@ -30,3 +33,7 @@ import mantpy as mt
 
 print(mt.__version__)
 ```
+
+The [synthetic quick start](index.md) needs no data download. The paper's
+reproduction notebooks list their own runtime, input bundles and heavier
+analysis dependencies.

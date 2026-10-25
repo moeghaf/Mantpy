@@ -58,7 +58,7 @@ dependencies = [
   # `xarray-schema` dependency. xarray-schema 0.0.3 imports `pkg_resources` at
   # module scope, and setuptools 82 removed it — so anything below this floor
   # forces a `setuptools<82` cap onto every downstream consumer of Mantpy.
-  "squidpy>=1.8.2",
+  "squidpy>=1.8.2,<1.9",
   # tifffile <2026.5.2 imports `zarr.core.chunk_grids.RegularChunkGrid` at
   # module scope; zarr 3.2.0 removed it, so `tifffile.imread(aszarr=True)`
   # (im.py) fails. Upstream fixed this in tifffile 2026.5.2, which pulls

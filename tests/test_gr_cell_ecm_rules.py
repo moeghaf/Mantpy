@@ -365,7 +365,10 @@ def test_containing_ring_matches_oracle():
     want = o_cross(cells, patches, "containing_ring", grid=grid)
     assert set(got) == set(want)
     for key, d in got.items():  # oracle floors a zero distance at 1e-6; Mantpy keeps the true 0.0
-        assert d == (0.0 if want[key] == 1e-6 else want[key])
+        expected = 0.0 if want[key] == 1e-6 else want[key]
+        # Scalar and vectorised norms can differ by a last bit across platforms.
+        # Keep zero distances exact and allow only float64 rounding otherwise.
+        np.testing.assert_allclose(d, expected, rtol=4 * np.finfo(np.float64).eps, atol=0.0)
     per_cell = np.bincount([i for i, _ in got], minlength=len(cells))
     assert per_cell.max() <= 9 and per_cell[len(cells) - 3] == 0  # far outside the lattice: no edge
 

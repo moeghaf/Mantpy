@@ -1,0 +1,154 @@
+{
+  "baseline_main": "b440fb0a407274c0add37ba31ea81d7bf6773655",
+  "source_checkout_head": "32cfc6beda28b776e6d25646787a26831996a276",
+  "source_directory": "D:\\Mantpy Paper Corrections Workspace\\working\\continuation_20261025\\software\\Mantpy",
+  "uncommitted_tracked_changes": [
+    "src/mantpy/_palette.py"
+  ],
+  "wheel_version": "1.0.2rc3",
+  "wheel_sha256": "9ad8eed649a269aa2f92dacc58e9747fab4d04bf4d46c35e4275a3b10ff2589c",
+  "wheel_relative_path": "software/mantpy_reproducibility/wheels/mantpy-1.0.2rc3-py3-none-any.whl",
+  "wheel_python_source_matches": [
+    {
+      "path": "src/mantpy/__init__.py",
+      "sha256": "42f7af047e8d3f10a5d59cd09f4c98f41abade9608cf9f8401bcfdc468431e3b"
+    },
+    {
+      "path": "src/mantpy/_constants.py",
+      "sha256": "02d758934dbe260a0bf862f3dea7ea505413857d5175464a958d9be8c66d415a"
+    },
+    {
+      "path": "src/mantpy/_palette.py",
+      "sha256": "40b3d6a1a94a075367fc4ab0b7782c2ae0b67d7f001448b93f31e51b100edbce"
+    },
+    {
+      "path": "src/mantpy/_plot_helpers.py",
+      "sha256": "2f01694832c0e5688d228c9f3ca66c002451c9786c3f0408937a20ce4cc709be"
+    },
+    {
+      "path": "src/mantpy/_style.py",
+      "sha256": "7a80ddd5de4239255e9e364d426db1a54e98990c343aa9e64ab6c6fb0853d494"
+    },
+    {
+      "path": "src/mantpy/_utils.py",
+      "sha256": "a42c49b3fc6e068f64abe969952ffe9502e12e4a071dadcedbc12ea4a4743049"
+    },
+    {
+      "path": "src/mantpy/_version.py",
+      "sha256": "9b45644a78a6b2ca4cf81289af49e6e3d30e6ca2406ad55c1a8d66b5d55ad7f1"
+    },
+    {
+      "path": "src/mantpy/ds.py",
+      "sha256": "5e9db12590d3a8c8b32aaab7c5dcb46a6aa6212e2a3def6e7e86048b6d21764a"
+    },
+    {
+      "path": "src/mantpy/fetch.py",
+      "sha256": "e390790b269e922c1499f1a5072e9c06500eb93fd2e06beb339b5cc5dbfc72e0"
+    },
+    {
+      "path": "src/mantpy/gr.py",
+      "sha256": "505fc21408aff7dfa4dff99aa33ee36143f351ce7ed372078cbb75c3442dde04"
+    },
+    {
+      "path": "src/mantpy/im.py",
+      "sha256": "baa259c7af5717828b4d934bf7c47cbdc344882fa1b7e26c81be7af2c1a56a22"
+    },
+    {
+      "path": "src/mantpy/io.py",
+      "sha256": "b48956d96f6e82a3168f9d705c301a1e7313d40f41951942c786c507072dccf9"
+    },
+    {
+      "path": "src/mantpy/palette.py",
+      "sha256": "858408aae8fe8c104b50c00bc6f4b2de53cecd7dc5b734815265d28330f6c445"
+    },
+    {
+      "path": "src/mantpy/pl.py",
+      "sha256": "de895dd2513e15916da85abeec51b502b4b2e5a2cb818bcaa53af07ee4c22488"
+    },
+    {
+      "path": "src/mantpy/pp.py",
+      "sha256": "2ec85b5f0cfa3636ee76800d43b2e9ca4ccd1e3e1877f8b4cc1b66a5fcc042b9"
+    },
+    {
+      "path": "src/mantpy/style.py",
+      "sha256": "af8361605862959ce80c97210efd14e005d82d67366ccbc5b21e31a8fd56240c"
+    },
+    {
+      "path": "src/mantpy/tl.py",
+      "sha256": "4a1f4cb06d5c12b51c500c85f4bbf27f4ef6be6c994fb723edc947e5d15599fa"
+    },
+    {
+      "path": "src/mantpy/_core/__init__.py",
+      "sha256": "f559724ee34452f544f3cf4044e9acba564f899f947eaa58bd4ddc6bb6f70523"
+    },
+    {
+      "path": "src/mantpy/_core/_edges.py",
+      "sha256": "b6da11e75d2ea0dec6069dc2bb0ab352a39b8c588f0bcbba78d2b0a122826852"
+    },
+    {
+      "path": "src/mantpy/_core/_graph_mae_module.py",
+      "sha256": "919c1cca0f56e2e03613e49233c19cdc381f7059a0b4419629e8e310bcc7f11d"
+    },
+    {
+      "path": "src/mantpy/_core/_patching.py",
+      "sha256": "0ee2cd9846146cfceb13dfb826f03544dfb159c546a0ec8b1dafb16bb1ace537"
+    },
+    {
+      "path": "src/mantpy/_core/_permutation.py",
+      "sha256": "e0ddacf2f63b5e348f222f16cce0e2c9596b7f188c86211afa7b05f80d993431"
+    },
+    {
+      "path": "src/mantpy/_core/_segmentation.py",
+      "sha256": "449dd43a950694d4c3b7d11ead7068b414311c820752c319b68464692dcbf281"
+    },
+    {
+      "path": "src/mantpy/datasets/__init__.py",
+      "sha256": "9c8886ca973af7c37dd3ed4c61241dcbebb80b75f462e0bb8d25b8b610d941be"
+    },
+    {
+      "path": "src/mantpy/datasets/_download.py",
+      "sha256": "c9aa80dcac6d2520f2c0f999162c2bcc4ef242535a0b0d1aded686d492282869"
+    },
+    {
+      "path": "src/mantpy/datasets/_loaders.py",
+      "sha256": "85ad42350569f8a8601ed6b23db0fdd546330426d30d43a87240b285d357949d"
+    },
+    {
+      "path": "src/mantpy/datasets/_registry.py",
+      "sha256": "0d553a72ad7f6e0609ff81658f85923244b18010330f5636a22ac3720cf88cad"
+    },
+    {
+      "path": "src/mantpy/datasets/_toy.py",
+      "sha256": "9c78f63ff37c15c920a0d0ccf230baf9561626a20312583944fda09283b26ba7"
+    },
+    {
+      "path": "src/mantpy/nn/__init__.py",
+      "sha256": "7cea7e83c9f0f1c17117cf3d5f3c8a414a255c9d7245c43b654ea9f36586fdad"
+    },
+    {
+      "path": "src/mantpy/nn/_baselines.py",
+      "sha256": "fa8c4f193a721aac6eb56409a53a0658e7a4054ae5296cde8ca583c57a79af8a"
+    },
+    {
+      "path": "src/mantpy/nn/_graph_mae.py",
+      "sha256": "86f013142c3cd97eeed2ffcaa1cefadc9deecec1c28cfa2f7bb6113bce2e95d6"
+    },
+    {
+      "path": "src/mantpy/nn/_node_classifier.py",
+      "sha256": "77c330769d62c68ccf095a18feabf60d27d2b5932686395e823cf209f7effca5"
+    },
+    {
+      "path": "src/mantpy/nn/_patch_encoder.py",
+      "sha256": "f52230376fcf8fb6ea32e1d4a593e7146f31642c900cfea91c89428a4a80de1d"
+    },
+    {
+      "path": "src/mantpy/nn/_utils.py",
+      "sha256": "ee1c0f1d4af01f5d8dadcf4a46b83d9d44a791438afafb3d39c02b83fe019c52"
+    }
+  ],
+  "comparison": "All 34 packaged Python files exactly match the D: source bytes. Line endings are retained, even where Git main uses LF.",
+  "build_version_note": "Version is dynamic via setuptools-scm. The supplied wheel records rc3; an ordinary build of this new branch may derive a different SCM version. No build was run for this handoff.",
+  "notebook_environment": "mantpy_reproducibility/provenance/candidate/requirements-lock.txt, pip_freeze_observed.txt, runtime_snapshot.json and candidate.json",
+  "overleaf_reference": "88006dff34a3d4e950140ea81574817a3eee792a",
+  "no_experiments_run": true
+}

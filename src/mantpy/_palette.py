@@ -284,6 +284,61 @@ CELL_PALETTE_LUNG_EXT: list[str] = ["#7f0000", "#003f7f", "#3f3f3f"]
 # Soft placeholder text for unavailable reconstructions.
 PLACEHOLDER_GREY = "#888888"
 
+# Shared display colours for patch-representation comparisons. These preserve
+# the published representation colours; fitted cluster identities have their
+# own categorical palettes.
+REPRESENTATION_PALETTE: dict[str, str] = {
+    "pixel": "#CFCFCF",
+    "patch": "#8C8C8C",
+    "graph": "#7B3294",
+    "shuffled": "#FFFFFF",
+    "noedge": "#C2A5CF",
+}
+REPRESENTATION_EDGE_PALETTE: dict[str, str] = {
+    "pixel": NEUTRAL_MID,
+    "patch": "#6E6E6E",
+    "graph": REPRESENTATION_PALETTE["graph"],
+}
+
+# Named neutral shades used by the paper's existing vector figure builders.
+# Centralising them does not change the rendered colours.
+PAPER_NEUTRALS: dict[str, str] = {
+    "white": "#FFFFFF",
+    "text": "#222222",
+    "points": "#262626",
+    "annotations": "#333333",
+    "grid": "#E8E8E8",
+    "context": "#E4E4E4",
+    "feature": "#7A7A7A",
+    "intensity": "#A6A6A6",
+    "excluded_reference": "#C9C9C9",
+    "guide": "#BFBFBF",
+    "guide_dark": "#BBBBBB",
+    "mid": "#7F7F7F",
+}
+GRAPH_CONTROL_PALETTE: dict[str, str] = {
+    "graph": "#E8607A",
+    "cnn": TOL_BRIGHT_7_CUSTOM[2],
+    "no_context": NEUTRAL_MID,
+}
+FOREGROUND_CONTROL_PALETTE: dict[str, str] = {
+    "primary": "#6486A5",
+    "expanded": "#A56CA0",
+    "added": "#EADFBE",
+}
+PATCH_SIZE_PALETTE: dict[int, str] = {
+    16: "#9ECAE1",
+    32: "#4292C6",
+    64: "#08306B",
+}
+RECONSTRUCTION_CONTEXT_PALETTE: dict[str, str] = {
+    "cell": OKABE_ITO["vermillion"],
+    "joint": OKABE_ITO["orange"],
+    "ecm": ECM_PALETTE_LUNG_PUBLISHED[0],
+    "prior": PLACEHOLDER_GREY,
+}
+SEARCH_TRACE_COLOR = "#4C72B0"
+
 
 __all__ = [
     "CELL",
@@ -317,4 +372,12 @@ __all__ = [
     "EDGE_CELL_ECM",
     "CELL_PALETTE_LUNG_EXT",
     "PLACEHOLDER_GREY",
+    "REPRESENTATION_PALETTE",
+    "REPRESENTATION_EDGE_PALETTE",
+    "PAPER_NEUTRALS",
+    "GRAPH_CONTROL_PALETTE",
+    "FOREGROUND_CONTROL_PALETTE",
+    "PATCH_SIZE_PALETTE",
+    "RECONSTRUCTION_CONTEXT_PALETTE",
+    "SEARCH_TRACE_COLOR",
 ]

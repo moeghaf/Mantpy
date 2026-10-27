@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning][].
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-28
+
+Release accompanying the Nature Communications submission. The source is
+identical to the `1.0.2rc3` pre-release wheel used for the paper's execution
+checks (SHA-256 `9ad8eed649a269aa2f92dacc58e9747fab4d04bf4d46c35e4275a3b10ff2589c`)
+except for version metadata and this changelog entry; `mantpy._palette` gains
+the shared representation, neutral and graph-control palettes used by the
+paper's figure code.
+
 ### Added
 
 - The bioRxiv preprint DOI (`10.1101/2025.06.04.657781`) in `CITATION.cff`,

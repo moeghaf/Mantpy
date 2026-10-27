@@ -51,6 +51,16 @@ Quick-start files are never silently substituted for raw data. Tutorials choose
 whether to use them, validate their scientific metadata, and otherwise run the
 full workflow from the raw inputs.
 
+## Human small-intestine image 2
+
+The second intestine image of the paper (HuBMAP HBM735.PSTF.274, raw dataset
+HBM363.CKHC.928) and its four-class manual annotation are not part of the
+Zenodo record above. They are distributed as a manifest-verified bundle
+(`mantpy-hbm735-intestine.tar.gz`) with the companion reproduction repository
+and load through `source_dir=...` (next section); a consolidated dataset
+deposit that adds the bundle to the Zenodo record is planned, and the
+reproduction repository's README gives the current reference.
+
 ## Local verified bundles
 
 For testing or an institutional mirror, pass `source_dir=...`. The directory

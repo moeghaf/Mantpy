@@ -269,6 +269,14 @@ importable `mantpy.palette` module. The supported data attributes are:
 `ECM_PALETTE_LUNG_PUBLISHED`, `EDGE_CELL_CELL`, `EDGE_ECM_ECM`,
 `EDGE_CELL_ECM`, `CELL_PALETTE_LUNG_EXT`, and `PLACEHOLDER_GREY`.
 
+The paper's figure code shares these display palettes, added in 1.0.2:
+`REPRESENTATION_PALETTE` and `REPRESENTATION_EDGE_PALETTE` (pixel, patch,
+graph, shuffled-edge and no-edge representations), `PAPER_NEUTRALS` (named
+neutral shades), `GRAPH_CONTROL_PALETTE`, `FOREGROUND_CONTROL_PALETTE`,
+`PATCH_SIZE_PALETTE`, `RECONSTRUCTION_CONTEXT_PALETTE` and
+`SEARCH_TRACE_COLOR`. They preserve the published figure colours and do not
+change any fitted-cluster palette.
+
 ```{eval-rst}
 .. currentmodule:: mantpy.palette
 

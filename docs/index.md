@@ -31,7 +31,7 @@ The full worked analyses behind the
 [preprint](https://doi.org/10.1101/2025.06.04.657781) — with their real datasets,
 figures and source data — are maintained in the
 [Mantpy reproducibility repository](https://github.com/moeghaf/mantpy_reproducibility);
-the intestine and lung workflows run end to end on Colab.
+its notebooks rebuild every figure of the paper from frozen outputs (re-executed on Windows CPU; Colab execution has not been validated).
 
 ```{toctree}
 :hidden: true

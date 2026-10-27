@@ -4,10 +4,12 @@
 
 # Mantpy: extracellular-matrix analysis for spatial proteomics
 
+[![PyPI][badge-pypi]][pypi]
 [![Tests][badge-tests]][tests]
 [![Documentation][badge-docs]][documentation]
 [![Preprint][badge-preprint]][preprint]
 
+[badge-pypi]: https://img.shields.io/pypi/v/mantpy
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/moeghaf/Mantpy/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/mantpy
 [badge-preprint]: https://img.shields.io/badge/bioRxiv-10.1101%2F2025.06.04.657781-b31b1b
@@ -19,7 +21,7 @@ with cellular context. Mantpy works with `AnnData` and interoperates with
 Scanpy, Squidpy, and other single-cell and spatial tools.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/moeghaf/Mantpy/main/docs/_static/mantpy_overview.png" alt="Mantpy overview: input, graph construction, applications and interoperability" width="820"/>
+  <img src="https://raw.githubusercontent.com/moeghaf/Mantpy/main/docs/_static/mantpy_overview.png" alt="Mantpy overview (manuscript Fig. 1): input, graph construction, applications and interoperability" width="820"/>
 </p>
 
 ## Installation
@@ -31,6 +33,9 @@ the package does not require a GPU for graph construction or descriptive analysi
 ```bash
 pip install mantpy
 ```
+
+The current release is 1.0.2 ([PyPI][pypi], [GitHub release v1.0.2][release]);
+the [changelog][] lists what changed between releases.
 
 Optional extras add heavier dependencies only when needed:
 
@@ -102,9 +107,11 @@ Step-by-step guides, each executed when the documentation is built:
 - [Exporting to PyTorch Geometric](https://mantpy.readthedocs.io/en/latest/tutorials/export-pytorch-geometric.html)
 
 The full analyses behind the [preprint][] use real cohorts in the
-[reproducibility repository][tutorials]. Follow its pinned review-candidate
-installation and input instructions; the current paper notebooks have been
-checked on Windows CPU, with Colab execution still unvalidated.
+[reproducibility repository][tutorials]. Its notebooks rebuild every figure
+of the paper from frozen outputs; its README records the pinned environment,
+the Mantpy build each notebook was executed with and the known gaps. The
+notebooks have been re-executed on Windows CPU; Colab execution has not been
+validated.
 
 ## Public datasets
 
@@ -157,6 +164,8 @@ bug, use the [issue tracker][].
 [tutorials]: https://github.com/moeghaf/mantpy_reproducibility
 [issue tracker]: https://github.com/moeghaf/Mantpy/issues
 [tests]: https://github.com/moeghaf/Mantpy/actions/workflows/test.yaml
+[pypi]: https://pypi.org/project/mantpy/
+[release]: https://github.com/moeghaf/Mantpy/releases/tag/v1.0.2
 [documentation]: https://mantpy.readthedocs.io
 [changelog]: https://mantpy.readthedocs.io/en/latest/changelog.html
 [api documentation]: https://mantpy.readthedocs.io/en/latest/api.html

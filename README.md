@@ -110,35 +110,18 @@ Step-by-step guides, each executed when the documentation is built:
 - [Exporting to AnnData](https://mantpy.readthedocs.io/en/latest/tutorials/export-anndata.html)
 - [Exporting to PyTorch Geometric](https://mantpy.readthedocs.io/en/latest/tutorials/export-pytorch-geometric.html)
 
-The full analyses behind the [preprint][] use real cohorts in the
-[reproducibility repository][tutorials]. Its notebooks rebuild every figure
-of the paper from frozen outputs; its README records the pinned environment,
-the Mantpy build each notebook was executed with and the known gaps. The
-notebooks have been re-executed on Windows CPU; Colab execution has not been
-validated.
+## Paper reproducibility
+
+The [paper reproducibility repository][tutorials] contains tutorials, full
+experiment notebooks and figure plotting code.
 
 ## Public datasets
-
-One-line, checksummed loaders for every tutorial dataset, cached outside the
-package and reused offline:
 
 ```python
 intestine = mt.datasets.coliv_intestine()   #  93 MB
 lung = mt.datasets.balbc_pbs_lung()         #  71 MB
 liver = mt.datasets.schistosoma_ecm()       #  38 MB
 ```
-
-Loaders return a `Bunch` with the files, images, metadata and provenance
-available for that dataset. The synthetic single-ROI example and the real
-cohorts have different contents; see the
-[dataset documentation](https://mantpy.readthedocs.io/en/latest/datasets.html)
-and paper notebooks for the appropriate workflow. The bundles are frozen
-under CC BY 4.0 in an immutable
-[Zenodo record](https://doi.org/10.5281/zenodo.21538382).
-
-The liver archive's `historical_best_k` describes its older analysis metadata.
-The current paper notebooks use their documented frozen K=6 partition; the
-loader does not recommend or fit a cluster count.
 
 ## Documentation
 
@@ -153,18 +136,13 @@ If you use Mantpy, please cite the preprint:
 > matrix analysis in spatial proteomics.** *bioRxiv* (2026).
 > doi: [10.1101/2025.06.04.657781](https://doi.org/10.1101/2025.06.04.657781)
 
-Machine-readable citation metadata is in
-[`CITATION.cff`](https://github.com/moeghaf/Mantpy/blob/main/CITATION.cff)
-(GitHub's "Cite this repository" button). The tutorial datasets have their own
-[Zenodo DOI](https://doi.org/10.5281/zenodo.21538382).
-
 ## Contact
 
-For questions and help requests, use the [scverse discourse][]. To report a
-bug, use the [issue tracker][].
+For questions, contact [moeghaf@gmail.com](mailto:moeghaf@gmail.com) or
+[mohamed.ghafoor@postgrad.manchester.ac.uk](mailto:mohamed.ghafoor@postgrad.manchester.ac.uk).
+To report a bug, use the [issue tracker][].
 
 [preprint]: https://doi.org/10.1101/2025.06.04.657781
-[scverse discourse]: https://discourse.scverse.org/
 [tutorials]: https://github.com/moeghaf/mantpy_reproducibility
 [issue tracker]: https://github.com/moeghaf/Mantpy/issues
 [tests]: https://github.com/moeghaf/Mantpy/actions/workflows/test.yaml

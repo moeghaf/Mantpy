@@ -20,6 +20,12 @@ linked node types, so matrix structure can be analysed on its own or together
 with cellular context. Mantpy works with `AnnData` and interoperates with
 Scanpy, Squidpy, and other single-cell and spatial tools.
 
+## Recognition and presentations
+
+- **2026:** Accepted poster presentation, ML4SpatialBio workshop at NeurIPS.
+- **2026:** Flash talk, scverse conference.
+- **2025:** Top Poster Award, British Society for Matrix Biology conference.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/moeghaf/Mantpy/main/docs/_static/mantpy_overview.png" alt="Mantpy overview (manuscript Fig. 1): input, graph construction, applications and interoperability" width="820"/>
 </p>

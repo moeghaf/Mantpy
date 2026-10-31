@@ -271,7 +271,6 @@ class TestImageECMPatches:
         ("kwargs", "message"),
         [
             ({"feature_families": ("summary", "unknown")}, "supports only"),
-            ({"feature_families": ()}, "at least one"),
             ({"feature_kwargs": {"texture": {}}}, "unselected or unknown"),
             ({"feature_kwargs": {"summary": {"channels": [0]}}}, "Mantpy-managed"),
         ],

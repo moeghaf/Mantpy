@@ -24,6 +24,11 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ECMClusterGraphBundle": ("mantpy.nn._node_classifier", "gnn"),
     "NodeClassifier": ("mantpy.nn._node_classifier", "gnn"),
     "build_ohe_cluster_graphs": ("mantpy.nn._node_classifier", "gnn"),
+    "GraphClassifierFit": ("mantpy.nn._training", "gnn"),
+    "NodeAttribution": ("mantpy.nn._training", "gnn"),
+    "train_node_classifier": ("mantpy.nn._training", "gnn"),
+    "node_integrated_gradients": ("mantpy.nn._training", "gnn"),
+    "node_classification_loss": ("mantpy.nn._training", "gnn"),
 }
 
 # Keep the public contract fixed across base, [patch], and [gnn] installs.

@@ -15,7 +15,8 @@ References
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from collections.abc import Callable, Mapping
+from typing import Any, Literal
 
 import numpy as np
 from anndata import AnnData
@@ -80,6 +81,8 @@ class GraphMAE:
         norm: Literal["batchnorm", "layernorm", "graphnorm", "pairnorm"] = "batchnorm",
         mask_ratio: float = 0.5,
         mitigation: Literal["none", "dropedge", "residual", "jk"] = "none",
+        module_factory: Callable | None = None,
+        module_kwargs: Mapping[str, Any] | None = None,
     ):
         if hidden_dim < 1:
             raise ValueError(f"hidden_dim={hidden_dim!r}: expected positive int. Use hidden_dim >= 1.")
@@ -94,8 +97,14 @@ class GraphMAE:
         self.norm = norm
         self.mask_ratio = mask_ratio
         self.mitigation = mitigation
+        self._module_factory = module_factory
+        self._module_kwargs = dict(module_kwargs or {})
         self._module: ECMGraphMAEModule | None = None
         self._device = "cpu"
+        self._history: dict[str, list[float]] = {"train_loss": []}
+        self._optimizer_updates = 0
+        self._feature_transform: dict[str, np.ndarray] = {}
+        self._latent_transform: dict[str, np.ndarray] = {}
 
     def __repr__(self) -> str:
         fitted = self._module is not None and hasattr(self, "_train_graph")
@@ -105,7 +114,9 @@ class GraphMAE:
             details += f", device={self._device!r}, n_nodes={int(self._train_graph[0].shape[0])}"
         return f"GraphMAE({details})"
 
-    def _tensors(self, graph: Data, standardize: bool) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    def _tensors(
+        self, graph: Data, standardize: bool, *, feature_transform: str = "graph",
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         x = np.asarray(graph.x.cpu().numpy() if torch.is_tensor(graph.x) else graph.x, dtype=np.float32)
         ei = np.asarray(graph.edge_index.cpu().numpy() if torch.is_tensor(graph.edge_index) else graph.edge_index)
         ea = getattr(graph, "edge_attr", None)
@@ -114,9 +125,24 @@ class GraphMAE:
         if self.encoder in EDGE_ENCODERS and ea is None:
             raise ValueError(f"encoder={self.encoder!r} needs edge features, but graph.edge_attr is None.")
         if standardize:
-            x = _zscore(x)
-            if ea is not None:
-                ea = _zscore(ea)
+            if feature_transform == "graph":
+                x = _zscore(x)
+                if ea is not None:
+                    ea = _zscore(ea)
+            elif feature_transform == "fitted":
+                if not self._feature_transform:
+                    raise RuntimeError("No fitted feature transform; train the model first.")
+                if x.shape[1] != len(self._feature_transform["node_mean"]):
+                    raise ValueError("Node feature columns differ from the fitted graph.")
+                x = (x - self._feature_transform["node_mean"]) / self._feature_transform["node_scale"]
+                if ea is not None:
+                    if "edge_mean" not in self._feature_transform:
+                        raise ValueError("The fitted graph did not have edge features.")
+                    if ea.shape[1] != len(self._feature_transform["edge_mean"]):
+                        raise ValueError("Edge feature columns differ from the fitted graph.")
+                    ea = (ea - self._feature_transform["edge_mean"]) / self._feature_transform["edge_scale"]
+            else:
+                raise ValueError("feature_transform must be 'graph' or 'fitted'.")
         xt = torch.tensor(x, device=self._device)
         eit = torch.tensor(ei, dtype=torch.long, device=self._device)
         eat = torch.tensor(ea, device=self._device) if ea is not None else None
@@ -134,6 +160,13 @@ class GraphMAE:
         rng: int | np.random.Generator | None = None,
         accelerator: str = "auto",
         enable_progress_bar: bool = True,
+        optimizer_factory: Callable | None = None,
+        optimizer_kwargs: Mapping[str, Any] | None = None,
+        scheduler: Literal["cosine"] | None = "cosine",
+        scheduler_factory: Callable | None = None,
+        scheduler_kwargs: Mapping[str, Any] | None = None,
+        reconstruction_loss: Callable | None = None,
+        callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> GraphMAE:
         """Fit the autoencoder on a single graph by masked-feature reconstruction.
 
@@ -172,38 +205,82 @@ class GraphMAE:
         """
         seed = rng if isinstance(rng, int | np.integer) else np.random.default_rng(rng).integers(0, 2**31 - 1)
         seed = int(seed)
+        if max_epochs < 1 or scheduler not in ("cosine", None):
+            raise ValueError("max_epochs must be positive and scheduler must be 'cosine' or None.")
         torch.manual_seed(seed)
         self._device = resolve_accelerator(accelerator)
+        self._latent_transform = {}
+        raw_x = np.asarray(graph.x.detach().cpu().numpy() if torch.is_tensor(graph.x) else graph.x, dtype=np.float32)
+        self._feature_transform = {
+            "node_mean": raw_x.mean(axis=0),
+            "node_scale": raw_x.std(axis=0) + 1e-8,
+        }
+        raw_ea = getattr(graph, "edge_attr", None)
+        if raw_ea is not None:
+            raw_ea = np.asarray(
+                raw_ea.detach().cpu().numpy() if torch.is_tensor(raw_ea) else raw_ea, dtype=np.float32
+            )
+            self._feature_transform.update(edge_mean=raw_ea.mean(axis=0), edge_scale=raw_ea.std(axis=0) + 1e-8)
+        if not standardize:
+            self._feature_transform = {
+                key: np.zeros_like(value) if key.endswith("_mean") else np.ones_like(value)
+                for key, value in self._feature_transform.items()
+            }
         x, ei, ea = self._tensors(graph, standardize)
         n, din = x.shape
         edim = ea.shape[1] if ea is not None else 3
 
-        self._module = ECMGraphMAEModule(
-            din=din,
-            hid=self.hidden_dim,
-            layers=self.n_layers,
-            encoder=self.encoder,
-            decoder=self.decoder,
-            edim=edim,
-            norm=self.norm,
-            mitigation=self.mitigation,
-        ).to(self._device)
-        opt = torch.optim.AdamW(self._module.parameters(), lr=lr, weight_decay=weight_decay)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, max_epochs)
+        factory = self._module_factory or ECMGraphMAEModule
+        params = {
+            "din": din,
+            "hid": self.hidden_dim,
+            "layers": self.n_layers,
+            "encoder": self.encoder,
+            "decoder": self.decoder,
+            "edim": edim,
+            "norm": self.norm,
+            "mitigation": self.mitigation,
+        }
+        self._module = factory(**{**params, **self._module_kwargs}).to(self._device)
+        optimizer_type = optimizer_factory or torch.optim.AdamW
+        opt = optimizer_type(
+            self._module.parameters(), **{"lr": lr, "weight_decay": weight_decay, **dict(optimizer_kwargs or {})}
+        )
+        if scheduler_factory is not None:
+            sched = scheduler_factory(opt, **dict(scheduler_kwargs or {}))
+        elif scheduler == "cosine":
+            sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+                opt, **{"T_max": max_epochs, **dict(scheduler_kwargs or {})}
+            )
+        else:
+            sched = None
         gen = torch.Generator(device=self._device).manual_seed(seed)
+        self._history = {"train_loss": []}
+        self._optimizer_updates = 0
         self._module.train()
         epochs = trange(max_epochs, desc="GraphMAE", unit="epoch") if enable_progress_bar else range(max_epochs)
-        for _ in epochs:
+        for epoch in epochs:
             opt.zero_grad()
             mask = torch.rand(n, generator=gen, device=self._device) < self.mask_ratio
             rec = self._module.forward_node(x, ei, ea, mask)
-            if recon_loss == "scaled_cosine":
+            if reconstruction_loss is not None:
+                loss = reconstruction_loss(rec[mask], x[mask])
+            elif recon_loss == "scaled_cosine":
                 loss = ((1 - F.cosine_similarity(rec[mask], x[mask], dim=1)) ** 2).mean()
             else:
                 loss = F.mse_loss(rec[mask], x[mask])
             loss.backward()
             opt.step()
-            sched.step()
+            if sched is not None:
+                sched.step()
+            value = float(loss.detach().cpu())
+            self._history["train_loss"].append(value)
+            self._optimizer_updates += 1
+            if callback is not None:
+                callback({
+                    "epoch": epoch + 1, "train_loss": value,
+                    "optimizer_updates": self._optimizer_updates, "lr": float(opt.param_groups[0]["lr"]),
+                })
             if enable_progress_bar:
                 epochs.set_postfix(loss=f"{loss.detach().item():.4f}", refresh=False)
         self._module.eval()
@@ -219,7 +296,11 @@ class GraphMAE:
         return self
 
     @torch.no_grad()
-    def get_node_latent(self, graph: Data | None = None, *, standardize: bool = True) -> np.ndarray:
+    def get_node_latent(
+        self, graph: Data | None = None, *, standardize: bool = True,
+        standardize_output: bool = True, feature_transform: Literal["graph", "fitted"] = "graph",
+        output_transform: Literal["graph", "fitted"] = "graph",
+    ) -> np.ndarray:
         """Return the per-node embedding (z-scored encoder output).
 
         Parameters
@@ -240,9 +321,43 @@ class GraphMAE:
         if graph is None:
             x, ei, ea = self._train_graph
         else:
-            x, ei, ea = self._tensors(graph, standardize)
+            x, ei, ea = self._tensors(graph, standardize, feature_transform=feature_transform)
         h = self._module.encode(x, ei, ea).cpu().numpy()
-        return _zscore(h).astype(np.float32)
+        if graph is None:
+            self._latent_transform = {"mean": h.mean(axis=0), "scale": h.std(axis=0) + 1e-8}
+        if not standardize_output:
+            return h.astype(np.float32)
+        if output_transform == "graph":
+            return _zscore(h).astype(np.float32)
+        if output_transform != "fitted":
+            raise ValueError("output_transform must be 'graph' or 'fitted'.")
+        if not self._latent_transform:
+            train_x, train_ei, train_ea = self._train_graph
+            train_h = self._module.encode(train_x, train_ei, train_ea).cpu().numpy()
+            self._latent_transform = {"mean": train_h.mean(axis=0), "scale": train_h.std(axis=0) + 1e-8}
+        return ((h - self._latent_transform["mean"]) / self._latent_transform["scale"]).astype(np.float32)
+
+    @property
+    def history(self) -> dict[str, list[float]]:
+        """Detached reconstruction losses in optimization-step order."""
+        return {key: list(values) for key, values in self._history.items()}
+
+    @property
+    def optimizer_updates(self) -> int:
+        """Number of completed optimizer steps."""
+        return self._optimizer_updates
+
+    @property
+    def model(self):
+        """Fitted masked graph autoencoder module."""
+        if self._module is None:
+            raise RuntimeError("GraphMAE is not fitted.")
+        return self._module
+
+    @property
+    def feature_transform_state(self) -> dict[str, np.ndarray]:
+        """Copied training-graph node/edge means and scales."""
+        return {key: value.copy() for key, value in self._feature_transform.items()}
 
 
 def encode_graphmae(
@@ -267,6 +382,17 @@ def encode_graphmae(
     accelerator: str = "auto",
     enable_progress_bar: bool = True,
     overwrite: bool = False,
+    include_edge_features: bool = True,
+    standardize_output: bool = True,
+    module_factory: Callable | None = None,
+    module_kwargs: Mapping[str, Any] | None = None,
+    optimizer_factory: Callable | None = None,
+    optimizer_kwargs: Mapping[str, Any] | None = None,
+    scheduler: Literal["cosine"] | None = "cosine",
+    scheduler_factory: Callable | None = None,
+    scheduler_kwargs: Mapping[str, Any] | None = None,
+    reconstruction_loss: Callable | None = None,
+    callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> GraphMAE:
     """Learn and attach a GraphMAE node representation in one call.
 
@@ -306,7 +432,9 @@ def encode_graphmae(
 
     from mantpy.gr import to_pyg
 
-    graph = to_pyg(adata, graph_key=graph_key, node_feature_key=node_feature_key)
+    graph = to_pyg(
+        adata, graph_key=graph_key, node_feature_key=node_feature_key, include_edge_features=include_edge_features
+    )
     # GraphMAE consumes only x/edge_index/edge_attr. Explicitly discard any
     # optional prediction target that a legacy graph export may carry.
     if "y" in graph:
@@ -319,6 +447,8 @@ def encode_graphmae(
         norm=norm,
         mask_ratio=mask_ratio,
         mitigation=mitigation,
+        module_factory=module_factory,
+        module_kwargs=module_kwargs,
     ).train(
         graph,
         max_epochs=max_epochs,
@@ -329,8 +459,11 @@ def encode_graphmae(
         rng=random_state,
         accelerator=accelerator,
         enable_progress_bar=enable_progress_bar,
+        optimizer_factory=optimizer_factory, optimizer_kwargs=optimizer_kwargs,
+        scheduler=scheduler, scheduler_factory=scheduler_factory, scheduler_kwargs=scheduler_kwargs,
+        reconstruction_loss=reconstruction_loss, callback=callback,
     )
-    embedding = model.get_node_latent()
+    embedding = model.get_node_latent(standardize_output=standardize_output)
     if embedding.shape[0] != adata.n_obs:
         raise ValueError(
             f"GraphMAE returned {embedding.shape[0]} node embeddings for an AnnData with {adata.n_obs} observations."
@@ -350,6 +483,11 @@ def encode_graphmae(
             "norm": norm,
             "mask_ratio": mask_ratio,
             "mitigation": mitigation,
+            "module_factory": (
+                getattr(module_factory, "__qualname__", type(module_factory).__qualname__)
+                if module_factory is not None else "ECMGraphMAEModule"
+            ),
+            "module_kwargs": dict(module_kwargs or {}),
         },
         "training": {
             "max_epochs": max_epochs,
@@ -357,7 +495,21 @@ def encode_graphmae(
             "weight_decay": weight_decay,
             "recon_loss": recon_loss,
             "standardize": standardize,
+            "standardize_output": standardize_output,
+            "include_edge_features": include_edge_features,
+            "optimizer_updates": model.optimizer_updates,
+            "optimizer": (
+                getattr(optimizer_factory, "__qualname__", type(optimizer_factory).__qualname__)
+                if optimizer_factory is not None else "AdamW"
+            ),
+            "optimizer_kwargs": dict(optimizer_kwargs or {}),
+            "scheduler": (
+                getattr(scheduler_factory, "__qualname__", type(scheduler_factory).__qualname__)
+                if scheduler_factory is not None else scheduler
+            ),
+            "scheduler_kwargs": dict(scheduler_kwargs or {}),
         },
+        "history": model.history,
         "random_state": int(random_state),
         "device": model._device,
         "n_nodes": int(graph.num_nodes),

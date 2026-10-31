@@ -59,6 +59,8 @@ __all__ = [
     "compose_cell_ecm_graph",
     "ensure_cell_ecm_graph",
     "extract_components_radius_reconnect",
+    "extract_components_existing",
+    "joint_graph_from_connectivities",
     "JointGraphSummary",
     "GraphBuildResult",
     "ECMGraphBuildResult",
@@ -66,6 +68,7 @@ __all__ = [
     "joint_graph_summary",
     "largest_component_radius_reconnect",
     "to_hetero_pyg",
+    "to_networkx",
     "to_pyg",
 ]
 
@@ -83,6 +86,9 @@ _EPS = 1e-8
 
 EDGE_FEATURE_REGISTRY: dict[str, EdgeFeatureFn] = {
     "log_distance": lambda pi, pj, d: np.array([np.log1p(d)], dtype=np.float32),
+    # Natural logarithm used by the paper's geometric edge representation.
+    # Coincident centroids use eps=1e-9; existing log_distance remains log1p.
+    "log_euclidean_distance": lambda pi, pj, d: np.array([np.log(max(float(d), 1e-9))], dtype=np.float32),
     "norm_angle": lambda pi, pj, d: np.array(
         [(np.arctan2(pj[1] - pi[1], pj[0] - pi[0]) + np.pi) / (2.0 * np.pi)],
         dtype=np.float32,
@@ -105,6 +111,12 @@ EDGE_FEATURE_REGISTRY: dict[str, EdgeFeatureFn] = {
         [float(abs(pj[0] - pi[0]) + abs(pj[1] - pi[1]))], dtype=np.float32
     ),
 }
+
+from mantpy._graph_adapters import (  # noqa: E402
+    extract_components_existing,
+    joint_graph_from_connectivities,
+    to_networkx,
+)
 
 
 def exp_neg_dist(sigma: float = 100.0) -> EdgeFeatureFn:
@@ -141,13 +153,14 @@ def _edge_continuity(ys, xs, r, c, foreground, n_samples=6):
     return foreground[yy, xx].mean(1)
 
 
-def _edge_feature_matrix(pts, r, c, names):
+def _edge_feature_matrix(pts, r, c, names, *, dtype=np.float32):
     dx = pts[c, 0] - pts[r, 0]
     dy = pts[c, 1] - pts[r, 1]
     d = np.sqrt(dx * dx + dy * dy)
     th = np.arctan2(dy, dx)
     vec = {
         "log_distance": np.log1p(d),
+        "log_euclidean_distance": np.log(np.maximum(d, 1e-9)),
         "distance": d,
         "sin_angle": np.sin(th),
         "cos_angle": np.cos(th),
@@ -161,7 +174,7 @@ def _edge_feature_matrix(pts, r, c, names):
         cols = [vec[nm] for nm in names]
     except KeyError as err:
         raise ValueError(f"unknown edge feature {err.args[0]!r}; build_patch_graph supports {sorted(vec)}.") from None
-    return np.column_stack(cols).astype(np.float32)
+    return np.column_stack(cols).astype(dtype)
 
 
 class PatchGraphResult(dict[str, Any]):
@@ -265,6 +278,9 @@ def build_patch_graph(
     continuity_samples: int = 6,
     edge_features: Sequence[str] = ("log_distance", "sin_angle2", "cos_angle2"),
     standardize_edges: bool = True,
+    edge_feature_precision: Literal["float32", "float64"] = "float32",
+    standardization_scope: Literal["undirected", "directed"] = "undirected",
+    standardization_eps: float = _EPS,
     key_added: str = "patch",
 ) -> PatchGraphResult:
     """Spatial k-NN graph over image-patch centroids, pruning edges that cross background.
@@ -302,6 +318,16 @@ def build_patch_graph(
         ``("log_distance", "sin_angle2", "cos_angle2", "continuity")`` is the ``geom_cont`` variant.
     standardize_edges
         Z-score each edge-feature column across edges (matches the scale the encoder expects).
+    edge_feature_precision
+        Precision used for geometric features and standardization. Exported
+        edge attributes remain float32; float64 postpones rounding.
+    standardization_scope
+        ``"undirected"`` retains the existing feature calculation and repeats
+        each vector for the reverse edge. ``"directed"`` computes features in
+        both orientations before standardizing, including directional signs.
+    standardization_eps
+        Non-negative denominator offset. At zero, constant columns use a
+        denominator of one. The default retains the existing epsilon policy.
     key_added
         For AnnData input, store the sparse adjacency in
         ``obsp[f'{key_added}_connectivities']`` and the PyG-ready edge arrays
@@ -321,6 +347,13 @@ def build_patch_graph(
     mantpy.nn.GraphMAE : consumes the returned edges as a PyG ``Data``.
     """
     from sklearn.neighbors import NearestNeighbors
+
+    if edge_feature_precision not in {"float32", "float64"}:
+        raise ValueError("edge_feature_precision must be 'float32' or 'float64'.")
+    if standardization_scope not in {"undirected", "directed"}:
+        raise ValueError("standardization_scope must be 'undirected' or 'directed'.")
+    if not np.isfinite(standardization_eps) or standardization_eps < 0:
+        raise ValueError("standardization_eps must be finite and non-negative.")
 
     adata = coords if isinstance(coords, AnnData) else None
     if adata is not None:
@@ -365,6 +398,9 @@ def build_patch_graph(
     # "continuity" (per-edge fraction of the segment on tissue) is not a geometry-only feature, so
     # it is assembled here from the foreground mask rather than in _edge_feature_matrix.
     names = list(edge_features)
+    dtype = np.dtype(edge_feature_precision)
+    edge_index = np.hstack([np.vstack([r, c]), np.vstack([c, r])]).astype(np.int64)
+    fr, fc = edge_index if standardization_scope == "directed" else (r, c)
     if "continuity" in names:
         if fg is None:
             raise ValueError(
@@ -372,22 +408,32 @@ def build_patch_graph(
                 "pass foreground=... and pixel_coords=(ys, xs)."
             )
         geom_names = [nm for nm in names if nm != "continuity"]
-        geom = _edge_feature_matrix(pts, r, c, geom_names) if geom_names else np.empty((r.size, 0), dtype=np.float32)
+        geom = _edge_feature_matrix(pts, fr, fc, geom_names, dtype=dtype) if geom_names else np.empty((fr.size, 0), dtype=dtype)
         col = {nm: geom[:, i] for i, nm in enumerate(geom_names)}
-        col["continuity"] = _edge_continuity(ys, xs, r, c, fg, continuity_samples).astype(np.float32)
-        feats = np.column_stack([col[nm] for nm in names]).astype(np.float32)
+        col["continuity"] = _edge_continuity(ys, xs, fr, fc, fg, continuity_samples).astype(dtype)
+        feats = np.column_stack([col[nm] for nm in names]).astype(dtype)
     else:
-        feats = _edge_feature_matrix(pts, r, c, names)
-    if standardize_edges:
-        feats = (feats - feats.mean(0)) / (feats.std(0) + _EPS)
-    edge_index = np.hstack([np.vstack([r, c]), np.vstack([c, r])]).astype(np.int64)
-    edge_attr = np.vstack([feats, feats]).astype(np.float32)
+        feats = _edge_feature_matrix(pts, fr, fc, names, dtype=dtype)
+    if standardize_edges and len(feats):
+        deviation = feats.std(0)
+        if standardization_eps == 0:
+            deviation[deviation == 0] = 1
+        else:
+            deviation = deviation + standardization_eps
+        feats = (feats - feats.mean(0)) / deviation
+    edge_attr = (feats if standardization_scope == "directed" else np.vstack([feats, feats])).astype(np.float32)
     params = {
         "k": int(k),
         "continuity_thresh": float(continuity_thresh),
         "continuity_samples": int(continuity_samples),
         "standardize_edges": bool(standardize_edges),
     }
+    if edge_feature_precision != "float32" or standardization_scope != "undirected" or standardization_eps != _EPS:
+        params.update(
+            edge_feature_precision=edge_feature_precision,
+            standardization_scope=standardization_scope,
+            standardization_eps=float(standardization_eps),
+        )
     connectivities_key = f"{key_added}_connectivities" if adata is not None else None
     result = PatchGraphResult(
         edge_index=edge_index,
@@ -2358,6 +2404,10 @@ def to_pyg(
     direct_graph: Mapping[str, Any] | None = None
     if isinstance(graph_object, Mapping) and "edge_index" in graph_object:
         direct_graph = graph_object
+    elif isinstance(graph_object, Mapping) and graph_object.get("format") == "mantpy_sparse_joint_v1":
+        connectivity_key = graph_object["connectivities"]["joint"]
+        matrix = adata.obsp[connectivity_key].tocoo()
+        direct_graph = {"edge_index": np.vstack((matrix.row, matrix.col)).astype(np.int64)}
     elif graph_key in adata.obsp:
         matrix = adata.obsp[graph_key].tocoo()
         direct_graph = {"edge_index": np.vstack((matrix.row, matrix.col)).astype(np.int64)}

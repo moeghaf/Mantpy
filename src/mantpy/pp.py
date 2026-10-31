@@ -31,6 +31,7 @@ from mantpy._core._patching import (
     remove_background,
     resolve_extractors,
 )
+from mantpy._image_normalizer import ImageNormalizer
 from mantpy._utils import log_params as _log_params
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ __all__ = [
     "ECMLeidenResolutionSelection",
     "ECMPatchSummary",
     "PatchComparison",
+    "ImageNormalizer",
     "annotate_structure",
     "attach_ecm_patches",
     "apply_ecm_label_overlay",
@@ -282,6 +284,7 @@ def image_ecm_patches(
         Squidpy image-feature families calculated on each retained node tile.
         Defaults to ``("summary", "texture", "histogram")``, which produces
         35 descriptors per selected channel with Squidpy's defaults.
+        Pass ``()`` for tiles and foreground selection without descriptors.
     feature_kwargs
         Optional family-specific keyword arguments forwarded to
         :meth:`squidpy.im.ImageContainer.features_summary`,
@@ -329,8 +332,6 @@ def image_ecm_patches(
     if isinstance(feature_families, str):
         feature_families = (feature_families,)
     feature_families = tuple(str(family) for family in feature_families)
-    if not feature_families:
-        raise ValueError("feature_families must contain at least one Squidpy feature family.")
     if len(set(feature_families)) != len(feature_families):
         raise ValueError("feature_families must not contain duplicates.")
     unknown_families = set(feature_families).difference(_SQUIDPY_IMAGE_FEATURE_FAMILIES)
@@ -452,14 +453,19 @@ def image_ecm_patches(
         ]
 
     patch_ids = [f"patch_y{row:04d}_x{col:04d}" for row, col in zip(grid_y, grid_x, strict=True)]
-    features, var, squidpy_version = _squidpy_image_features(
-        patches,
-        patch_ids=patch_ids,
-        channel_names=names,
-        feature_families=feature_families,
-        feature_kwargs=resolved_feature_kwargs,
-        n_jobs=n_jobs,
-    )
+    if feature_families:
+        features, var, squidpy_version = _squidpy_image_features(
+            patches,
+            patch_ids=patch_ids,
+            channel_names=names,
+            feature_families=feature_families,
+            feature_kwargs=resolved_feature_kwargs,
+            n_jobs=n_jobs,
+        )
+    else:
+        features = np.empty((len(patch_ids), 0), dtype=np.float32)
+        var = pd.DataFrame(index=pd.Index([], dtype=str))
+        squidpy_version = "not-used"
     obs = pd.DataFrame(
         {
             "sample_id": sample_id or "sample",
@@ -506,7 +512,7 @@ def image_ecm_patches(
         "mean_foreground_threshold": mean_foreground_threshold,
         "patch_foreground": active.astype(bool),
         "channel_patch_foreground": channel_active.astype(bool),
-        "feature_backend": "squidpy",
+        "feature_backend": "squidpy" if feature_families else "none",
         "squidpy_version": squidpy_version,
         "feature_families": np.asarray(feature_families, dtype=str),
         "feature_kwargs_json": json.dumps(resolved_feature_kwargs, sort_keys=True),
@@ -1560,14 +1566,6 @@ def extract_ecm_patches_cohort(
     def _array(image: np.ndarray | ImageContainer) -> np.ndarray:
         return image.to_array() if isinstance(image, ImageContainer) else np.asarray(image)
 
-    def _channel_float32(image: np.ndarray | ImageContainer, channel: int) -> np.ndarray:
-        if isinstance(image, ImageContainer):
-            selected = image[channel]
-            if not isinstance(selected, ImageContainer):
-                raise TypeError("ImageContainer channel indexing returned an unexpected value.")
-            return selected.to_array(dtype=np.float32)[0]
-        return np.asarray(image[channel], dtype=np.float32)
-
     image_shapes = {sample: _shape(image) for sample, image in images.items()}
     channel_counts = {shape[0] for shape in image_shapes.values()}
     if len(channel_counts) != 1:
@@ -1576,17 +1574,6 @@ def extract_ecm_patches_cohort(
     for sample, adata in adatas.items():
         if adata.n_vars != n_channels:
             raise ValueError(f"Sample {sample!r} has {adata.n_vars} variables but its image has {n_channels} channels.")
-
-    scaler: Any | None = None
-    if normalize == "pooled_zscore":
-        from sklearn.preprocessing import StandardScaler
-
-        scaler = StandardScaler()
-        for image in images.values():
-            array = _array(image)
-            pixels = np.asarray(array).reshape(array.shape[0], -1).T
-            for start in range(0, len(pixels), normalization_chunk_size):
-                scaler.partial_fit(pixels[start : start + normalization_chunk_size])
 
     ecm_indices: tuple[int, ...] = ()
     marker_order: tuple[str, ...] = ()
@@ -1608,43 +1595,20 @@ def extract_ecm_patches_cohort(
             if "is_ecm" not in adata.var or not np.array_equal(adata.var["is_ecm"].to_numpy(dtype=bool), reference_ecm):
                 raise ValueError(f"Sample {sample!r} has a different ECM-marker mask.")
 
-        total_pixels = sum(shape[1] * shape[2] for shape in image_shapes.values())
-        bound_values: list[np.floating] = []
-        for channel in ecm_indices:
-            pooled_arcsinh = np.empty(total_pixels, dtype=np.float32)
-            offset = 0
-            for image in images.values():
-                values = _channel_float32(image, channel).reshape(-1)
-                stop = offset + len(values)
-                pooled_arcsinh[offset:stop] = np.arcsinh(values / cofactor)
-                offset = stop
-            bound_values.append(np.percentile(pooled_arcsinh, percentile))
-        bounds = np.asarray(bound_values, dtype=np.float32)
+    normalizer = ImageNormalizer(
+        method=normalize,
+        cofactor=cofactor,
+        percentile=percentile,
+        channel_indices=ecm_indices if normalize == "pooled_arcsinh_percentile" else None,
+        chunk_size=normalization_chunk_size,
+    ).fit(images)
+    scaler = normalizer.scaler_
+    bounds = normalizer.bounds_
 
     targets = adatas if inplace else {key: adata.copy() for key, adata in adatas.items()}
     for key, target in targets.items():
         image = images[key]
-        if normalize == "none":
-            prepared = _array(image)
-        elif scaler is not None:
-            array = _array(image)
-            pixels = np.asarray(array).reshape(array.shape[0], -1).T
-            transformed = np.empty(pixels.shape, dtype=np.float32)
-            for start in range(0, len(pixels), normalization_chunk_size):
-                stop = min(start + normalization_chunk_size, len(pixels))
-                transformed[start:stop] = scaler.transform(pixels[start:stop]).astype(np.float32)
-            prepared = transformed.T.reshape(array.shape)
-        else:
-            if bounds is None:
-                raise RuntimeError("Pooled percentile bounds were not computed.")
-            prepared = np.empty(image_shapes[key], dtype=np.float32)
-            bound_by_channel = dict(zip(ecm_indices, bounds, strict=True))
-            for channel in range(n_channels):
-                transformed_channel = np.arcsinh(_channel_float32(image, channel) / cofactor)
-                bound = bound_by_channel.get(channel)
-                if bound is not None and bound > 0:
-                    transformed_channel = np.clip(transformed_channel / bound, 0.0, 1.0)
-                prepared[channel] = transformed_channel
+        prepared = normalizer.transform(image)
         target.uns.pop(ECM_PATCHES_KEY, None)
         extract_ecm_patches(target, prepared, **extract_kwargs)
         if scaler is not None:

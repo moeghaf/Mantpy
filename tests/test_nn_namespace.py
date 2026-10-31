@@ -19,6 +19,11 @@ EXPECTED_PUBLIC_API = [
     "ECMClusterGraphBundle",
     "NodeClassifier",
     "build_ohe_cluster_graphs",
+    "GraphClassifierFit",
+    "NodeAttribution",
+    "train_node_classifier",
+    "node_integrated_gradients",
+    "node_classification_loss",
 ]
 
 

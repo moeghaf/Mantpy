@@ -197,7 +197,7 @@ class NeighbourCompositionBaseline(_BaselineScorer):
     ECM-neighbour context.
     """
 
-    def __init__(self, *, context: str = "cell", max_iter: int = 1000, **_: Any) -> None:
+    def __init__(self, *, context: str = "cell", max_iter: int = 1000, estimator: Any = None, **_: Any) -> None:
         super().__init__()
         if context not in ("cell", "ecm", "joint"):
             raise ValueError(f"context must be 'cell', 'ecm' or 'joint'; got {context!r}.")
@@ -206,6 +206,7 @@ class NeighbourCompositionBaseline(_BaselineScorer):
         # collinear composition features without a convergence warning.
         self.context = context
         self.max_iter = max_iter
+        self.estimator = estimator
         self._clf: Any = None
         self._cell_types: list[str] = []
         self._K: int | None = None
@@ -267,6 +268,7 @@ class NeighbourCompositionBaseline(_BaselineScorer):
         graph_key: str = CELL_ECM_GRAPH_KEY,
         **_: Any,
     ) -> NeighbourCompositionBaseline:
+        from sklearn.base import clone
         from sklearn.linear_model import LogisticRegression
 
         self._store_keys(cluster_key, celltype_key, graph_key)
@@ -291,8 +293,26 @@ class NeighbourCompositionBaseline(_BaselineScorer):
         y = np.concatenate(labs)
         if np.unique(y).size < 2:
             raise ValueError("NeighbourCompositionBaseline needs >= 2 signal clusters to train.")
-        self._clf = LogisticRegression(max_iter=self.max_iter).fit(X, y)
+        self._clf = (
+            LogisticRegression(max_iter=self.max_iter) if self.estimator is None else clone(self.estimator)
+        )
+        if not hasattr(self._clf, "predict_proba"):
+            raise TypeError("estimator must implement fit and predict_proba.")
+        self._clf.fit(X, y)
         return self
+
+    def transform(self, cell_adata: AnnData, ecm_adata: AnnData) -> pd.DataFrame:
+        """Return row-aligned neighborhood proportions using the fitted vocabulary."""
+        if self._clf is None:
+            raise RuntimeError("NeighbourCompositionBaseline is not trained.")
+        features, _ = self._features(cell_adata, ecm_adata)
+        names = []
+        if self.context in {"cell", "joint"}:
+            names.extend(f"cell:{label}" for label in self._cell_types)
+        if self.context in {"ecm", "joint"}:
+            names.extend(f"ecm:{label}" for label in range(int(self._K)))
+        patches = ecm_adata.uns[ECM_PATCHES_KEY]
+        return pd.DataFrame(features, index=patches.index.copy(), columns=names)
 
     def score(self, cell_adata: AnnData, ecm_adata: AnnData) -> pd.DataFrame:
         """Return per-patch outputs for the denoising scorer contract.

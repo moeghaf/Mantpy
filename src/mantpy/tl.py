@@ -12,6 +12,18 @@ import pandas as pd
 import scipy.sparse as sp
 from anndata import AnnData
 
+from mantpy._analysis import (
+    CellECMEnrichmentResult,
+    ClusterCompositionDetails,
+    ComponentSummaryResult,
+    ContactMarkerContrastResult,
+    CooccurrenceDetails,
+    LabelReconstructionResult,
+    component_summary,
+    contact_marker_contrast,
+    neighbourhood_features,
+    reconstruct_labels,
+)
 from mantpy._constants import (
     CELL_ECM_GRAPH_KEY,
     ECM_GRAPH_KEY,
@@ -31,7 +43,13 @@ __all__ = [
     "AblationROCResult",
     "CentralVoidResult",
     "CellECMContactResult",
+    "CellECMEnrichmentResult",
     "ClusterCompositionResult",
+    "ClusterCompositionDetails",
+    "ComponentSummaryResult",
+    "ContactMarkerContrastResult",
+    "CooccurrenceDetails",
+    "LabelReconstructionResult",
     "CooccurrencePermResult",
     "ECMNeighbourAgreementSummary",
     "HeldOutDenoiseResult",
@@ -49,6 +67,8 @@ __all__ = [
     "cluster_cooccurrence",
     "cluster_cooccurrence_permutation_test",
     "compute_cluster_composition",
+    "component_summary",
+    "contact_marker_contrast",
     "cross_compartment_ablation",
     "denoise_ecm_clusters",
     "denoise_held_out_roi",
@@ -65,6 +85,8 @@ __all__ = [
     "loo_pristine_flag_rate",
     "loo_reconstruction_evaluation",
     "neighbourhood_clustering",
+    "neighbourhood_features",
+    "reconstruct_labels",
     "pick_representative_samples",
     "summarize_pristine_flag_rate",
     "summarize_reconstruction_evaluation",
@@ -292,7 +314,13 @@ def compute_cluster_composition(
     patches_key: str = "ecm_patches",
     drop_background: bool = True,
     group_order: Sequence[str] | None = None,
-) -> ClusterCompositionResult:
+    unit_col: str | None = None,
+    unit_aggregation: Literal["pool_counts", "mean_roi_fraction"] = "pool_counts",
+    categories: Sequence | None = None,
+    background_labels: Sequence | None = None,
+    label_source: Literal["auto", "obs", "patches"] = "auto",
+    return_details: bool = False,
+) -> ClusterCompositionResult | ClusterCompositionDetails:
     """Per-sample and per-group ECM-cluster composition across a cohort.
 
     For each AnnData in ``adatas``, computes the fraction of patches
@@ -334,6 +362,28 @@ def compute_cluster_composition(
         Optional explicit ordering for the ``per_group_mean`` index.
         ``None`` uses the first-appearance order of
         ``sample_meta[group_col]``.
+    unit_col
+        Optional biological-unit column in ``sample_meta``. Group means
+        weight units equally. Without it, each sample is one unit,
+        preserving the legacy mean of ROI fractions.
+    unit_aggregation
+        ``"pool_counts"`` sums patch counts within a unit before computing
+        fractions; ``"mean_roi_fraction"`` averages its ROI fractions.
+    categories
+        Optional complete, ordered labels, including absent states.
+        String labels are supported; inferred numeric labels sort in
+        ascending order, preserving legacy ordering.
+    background_labels
+        Labels excluded when ``drop_background=True``. ``None`` excludes
+        negative numeric labels, as before.
+    label_source
+        ``"auto"`` reads the legacy patch table when present, otherwise
+        ``adata.obs``; ``"obs"`` and ``"patches"`` select explicitly.
+    return_details
+        Return :class:`ClusterCompositionDetails` with raw counts,
+        per-unit fractions/counts and metadata. The default retains the
+        legacy two-item NamedTuple. Empty foreground samples have zero
+        fractions in either mode.
 
     Returns
     -------
@@ -350,31 +400,19 @@ def compute_cluster_composition(
     ... )  # doctest: +SKIP
     >>> comp.per_group_mean.shape  # (n_groups, K)  # doctest: +SKIP
     """
-    rows: list[dict] = []
-    for name in sample_meta.index:
-        s = adatas[name].uns[patches_key][cluster_col].value_counts(normalize=True).sort_index()
-        g = sample_meta.loc[name, group_col]
-        for cl, frac in s.items():
-            rows.append({"sample": name, "group": g, "cluster": int(cl), "frac": float(frac)})
-    comp = pd.DataFrame(rows)
-    wide = comp.pivot(index="sample", columns="cluster", values="frac").fillna(0.0).reindex(sample_meta.index)
+    from mantpy._analysis import composition_details
 
-    if drop_background:
-        valid_cols = sorted(c for c in wide.columns if c >= 0)
-        denom = wide[valid_cols].sum(axis=1).replace(0, np.nan)
-        per_sample = wide[valid_cols].div(denom, axis=0).fillna(0.0)
-    else:
-        per_sample = wide
-
-    if group_order is None:
-        group_order = list(dict.fromkeys(sample_meta[group_col]))
-
-    per_group_mean = pd.DataFrame(index=list(group_order), columns=per_sample.columns, dtype=float)
-    for g in group_order:
-        rois_g = sample_meta[sample_meta[group_col] == g].index.tolist()
-        per_group_mean.loc[g] = per_sample.loc[rois_g].mean(axis=0).values
-
-    return ClusterCompositionResult(per_sample=per_sample, per_group_mean=per_group_mean)
+    result = composition_details(
+        adatas, sample_meta=sample_meta, group_col=group_col,
+        cluster_col=cluster_col, patches_key=patches_key,
+        drop_background=drop_background, group_order=group_order,
+        unit_col=unit_col, unit_aggregation=unit_aggregation,
+        categories=categories, background_labels=background_labels,
+        label_source=label_source,
+    )
+    if return_details:
+        return result
+    return ClusterCompositionResult(result.per_sample, result.per_group_mean)
 
 
 class LesionSummary(NamedTuple):
@@ -997,6 +1035,7 @@ def _cooccurrence_counts(
     *,
     n_clusters: int,
     cluster_attr: str,
+    categories: Sequence | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Ordered-endpoint cluster-pair counts and labelled-node counts for one graph.
 
@@ -1015,7 +1054,11 @@ def _cooccurrence_counts(
             f"{type(G).__name__}.  Convert it explicitly (for example with "
             "G.to_undirected()) after deciding how reciprocal edges should be merged."
         )
-    labels = {v: int(d.get(cluster_attr, -1)) for v, d in G.nodes(data=True)}
+    if categories is None:
+        labels = {v: int(d.get(cluster_attr, -1)) for v, d in G.nodes(data=True)}
+    else:
+        mapping = {label: index for index, label in enumerate(categories)}
+        labels = {v: mapping.get(d.get(cluster_attr), -1) for v, d in G.nodes(data=True)}
     inter = np.zeros((n_clusters, n_clusters), dtype=float)
     node_count = np.zeros(n_clusters, dtype=float)
     for lbl in labels.values():
@@ -1038,6 +1081,7 @@ def _cooccurrence_log2_enrichment(
     node_count: np.ndarray,
     *,
     eps: float,
+    missing: Literal["zero", "nan"] = "zero",
 ) -> np.ndarray:
     """``log2((inter + eps) / expected)`` with ``expected = inter.sum() * p ⊗ p``.
 
@@ -1048,18 +1092,24 @@ def _cooccurrence_log2_enrichment(
     expected = inter.sum() * np.outer(p, p)
     expected = np.where(expected > 0, expected, np.nan)
     log_e = np.log2((inter + eps) / expected)
-    return np.where(np.isfinite(log_e), log_e, 0.0)
+    return np.where(np.isfinite(log_e), log_e, 0.0 if missing == "zero" else np.nan)
 
 
 def cluster_cooccurrence(
     adatas: dict | list,
     *,
-    n_clusters: int,
+    n_clusters: int | None = None,
     cluster_attr: str = "ecm_cluster",
     graph_key: str = ECM_GRAPH_KEY,
     ignore_negative_labels: bool = True,
     eps: float = 1e-9,
-) -> np.ndarray:
+    categories: Sequence | None = None,
+    sample_meta: pd.DataFrame | None = None,
+    unit_col: str | None = None,
+    unit_aggregation: Literal["pool_counts", "mean_roi_enrichment"] = "pool_counts",
+    return_details: bool = False,
+    missing: Literal["zero", "nan"] = "zero",
+) -> np.ndarray | CooccurrenceDetails:
     """Aggregate ``log2(observed / expected)`` cluster-cluster co-occurrence.
 
     Counting convention (ordered endpoints).  Every undirected edge
@@ -1101,8 +1151,10 @@ def cluster_cooccurrence(
     ----------
     adatas
         Either a dict ``{sample_id: AnnData}`` or a list of AnnData objects.
-        Only the spatial graph at ``adata.uns[graph_key]`` and the
-        ``cluster_attr`` node attribute are used.
+        Read the legacy graph at ``adata.uns[graph_key]`` and its
+        ``cluster_attr`` node attribute, or an observation-native square
+        symmetric graph at ``adata.obsp[graph_key]`` with labels in
+        ``adata.obs[cluster_attr]``.
     n_clusters
         Total number of cluster labels (matrix will be ``n_clusters ×
         n_clusters``).
@@ -1118,6 +1170,25 @@ def cluster_cooccurrence(
         ``True`` (unchanged behaviour).
     eps
         Small additive constant to avoid ``log2(0)`` in empty cells.
+    categories
+        Explicit ordered labels; supports strings and absent states.
+        If omitted, use ``range(n_clusters)``.
+    sample_meta, unit_col
+        Optional sample metadata and biological-unit column. Counts are
+        combined within each unit; the returned enrichment is then the
+        equal-unit mean. Without ``unit_col`` all samples are pooled,
+        preserving the original default.
+    unit_aggregation
+        ``"pool_counts"`` pools ROI counts before scoring each unit;
+        ``"mean_roi_enrichment"`` averages ROI enrichment within units.
+    return_details
+        Return observed/expected counts, node abundances, categories and
+        per-sample/per-unit results instead of the default array. With
+        unit aggregation, the overall counts describe pooled tissue;
+        the enrichment matrix describes the equal-unit mean.
+    missing
+        ``"zero"`` retains the legacy undefined-cell behavior;
+        ``"nan"`` exposes absent categories or graphs with no edges.
 
     Returns
     -------
@@ -1130,19 +1201,32 @@ def cluster_cooccurrence(
     ValueError
         If a graph is directed.
     """
+    from mantpy._analysis import _categories, cooccurrence_details
+
     del ignore_negative_labels  # retained for API compatibility; see docstring
-    iterable = adatas.values() if isinstance(adatas, dict) else list(adatas)
-    inter = np.zeros((n_clusters, n_clusters), dtype=float)
-    node_count = np.zeros(n_clusters, dtype=float)
-    for adata in iterable:
-        if graph_key not in adata.uns:
-            continue
-        roi_inter, roi_nodes = _cooccurrence_counts(
-            adata.uns[graph_key], n_clusters=n_clusters, cluster_attr=cluster_attr
+    legacy_numeric = categories is None
+    if legacy_numeric:
+        if not isinstance(n_clusters, (int, np.integer)) or n_clusters < 1:
+            raise ValueError("Provide a positive n_clusters or explicit categories.")
+        categories = range(n_clusters)
+    categories = _categories([], categories)
+    if n_clusters is not None and n_clusters != len(categories):
+        raise ValueError("n_clusters must match the number of categories.")
+
+    def count_fn(graph, *, n_clusters, cluster_attr, categories):
+        return _cooccurrence_counts(
+            graph, n_clusters=n_clusters, cluster_attr=cluster_attr,
+            categories=None if legacy_numeric else categories,
         )
-        inter += roi_inter
-        node_count += roi_nodes
-    return _cooccurrence_log2_enrichment(inter, node_count, eps=eps)
+
+    result = cooccurrence_details(
+        adatas, categories=categories, graph_key=graph_key,
+        cluster_attr=cluster_attr, sample_meta=sample_meta,
+        unit_col=unit_col, unit_aggregation=unit_aggregation,
+        missing=missing, eps=eps, count_fn=count_fn,
+        score_fn=_cooccurrence_log2_enrichment,
+    )
+    return result if return_details else result.enrichment
 
 
 class CooccurrencePermResult(NamedTuple):
@@ -1466,7 +1550,9 @@ def cell_ecm_enrichment(
     random_state: int = 0,
     key_added: str = "cell_ecm_enrichment",
     inplace: bool = True,
-) -> pd.DataFrame:
+    eps: float = 1e-9,
+    return_details: bool = False,
+) -> pd.DataFrame | CellECMEnrichmentResult:
     """Calculate log2(observed/expected) ECM-cluster enrichment around a cell type.
 
     For each ECM cluster k, counts cell-ECM edges in the unified graph whose
@@ -1512,6 +1598,13 @@ def cell_ecm_enrichment(
         AnnData case, the result is written to every input AnnData.
     inplace
         Write to ``adata.uns[key_added]`` (returns the DataFrame as well).
+    eps
+        Non-negative pseudocount added to observed and expected counts.
+        Zero yields exact ratios: absent observed edges with positive
+        expectation give negative infinity; zero divided by zero is NaN.
+    return_details
+        Return pooled and per-ROI tidy tables in
+        :class:`CellECMEnrichmentResult`, including when ``inplace=False``.
 
     Returns
     -------
@@ -1523,6 +1616,8 @@ def cell_ecm_enrichment(
 
     if n_perm < 0:
         raise ValueError("n_perm must be non-negative.")
+    if not np.isfinite(eps) or eps < 0:
+        raise ValueError("eps must be finite and non-negative.")
 
     if isinstance(adata_or_adatas, AnnData):
         adatas = {"_": adata_or_adatas}
@@ -1531,7 +1626,6 @@ def cell_ecm_enrichment(
     else:
         adatas = {f"_{i}": a for i, a in enumerate(adata_or_adatas)}
 
-    eps = 1e-9
     # Per-ROI structure: the cell-type of every cell node, the signal
     # cell-ECM edges as (cell index, ECM cluster), and (below) the ROI's edge
     # cluster frequencies.  Permuting cell-type labels WITHIN each ROI on the
@@ -1616,7 +1710,8 @@ def cell_ecm_enrichment(
     obs_counts, exp_counts = _enr_counts([r["ct"] for r in per_roi])
     if obs_counts.sum() == 0:
         raise ValueError(f"No cell-ECM edges incident to cell_type='{cell_type}' found.")
-    log2_enr = np.log2((obs_counts + eps) / (exp_counts + eps))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log2_enr = np.log2((obs_counts + eps) / (exp_counts + eps))
 
     if n_perm > 0:
         # Null: permute cell-type labels within each ROI on the fixed graph.
@@ -1625,7 +1720,8 @@ def cell_ecm_enrichment(
         for i in range(n_perm):
             ct_perm = [rng.permutation(r["ct"]) for r in per_roi]
             ob, ex = _enr_counts(ct_perm)
-            perm_log2[i] = np.log2((ob + eps) / (ex + eps))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                perm_log2[i] = np.log2((ob + eps) / (ex + eps))
 
         # Two-sided empirical p with +1 correction (floor = 1/(n_perm+1)).
         p_uncorr = ((np.abs(perm_log2) >= np.abs(log2_enr)[None, :]).sum(axis=0) + 1) / (n_perm + 1)
@@ -1654,7 +1750,8 @@ def cell_ecm_enrichment(
         is_t = r["ct"][r["e_cell"]] == target
         nb = np.bincount(r["e_clu"][is_t], minlength=K_ecm)[:K_ecm].astype(np.float64)
         ex = r["edge_freq"] * nb.sum()
-        l2 = np.log2((nb + eps) / (ex + eps))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            l2 = np.log2((nb + eps) / (ex + eps))
         for k in range(K_ecm):
             per_roi_rows.append(
                 {
@@ -1684,7 +1781,7 @@ def cell_ecm_enrichment(
                     }
                 },
             )
-    return df
+    return CellECMEnrichmentResult(df, per_roi_df) if return_details else df
 
 
 def cell_ecm_topology_sensitivity(
@@ -1749,7 +1846,9 @@ def cell_ecm_enrichment_matrix(
     cell_attr: str = "cell_type",
     ecm_attr: str = "ecm_cluster",
     random_state: int = 0,
-) -> pd.DataFrame:
+    eps: float = 1e-9,
+    return_details: bool = False,
+) -> pd.DataFrame | CellECMEnrichmentResult:
     """Cohort-wide cell-type x ECM-cluster enrichment matrix (one tidy frame).
 
     Runs :func:`cell_ecm_enrichment` for *every* cell type in turn (same
@@ -1788,6 +1887,12 @@ def cell_ecm_enrichment_matrix(
         Forwarded to :func:`cell_ecm_enrichment`.
     random_state
         Seed for the permutation RNG (shared across cell types).
+    eps
+        Non-negative pseudocount, forwarded to the focal-type calculation.
+        Zero gives exact descriptive ratios and undefined zero/zero cells.
+    return_details
+        Return a :class:`CellECMEnrichmentResult` with the pooled matrix and
+        per-ROI tidy effect sizes. The default remains a DataFrame.
 
     Returns
     -------
@@ -1807,6 +1912,8 @@ def cell_ecm_enrichment_matrix(
     """
     from mantpy._utils import bh_fdr_correction
 
+    if not np.isfinite(eps) or eps < 0:
+        raise ValueError("eps must be finite and non-negative.")
     if isinstance(cohort_cells, AnnData):
         adatas = {"_": cohort_cells}
     elif isinstance(cohort_cells, dict):
@@ -1832,6 +1939,7 @@ def cell_ecm_enrichment_matrix(
         cell_types = [str(c) for c in cell_types]
 
     rows: list[pd.DataFrame] = []
+    per_roi_rows: list[pd.DataFrame] = []
     for ct in cell_types:
         try:
             enr = cell_ecm_enrichment(
@@ -1845,10 +1953,17 @@ def cell_ecm_enrichment_matrix(
                 ecm_attr=ecm_attr,
                 random_state=random_state,
                 inplace=False,
+                eps=eps,
+                return_details=return_details,
             )
         except ValueError:
             # No cell-ECM edges incident to this cell type — skip the row.
             continue
+        if return_details:
+            per_roi = enr.per_roi.copy()
+            per_roi.insert(0, "cell_type", ct)
+            per_roi_rows.append(per_roi)
+            enr = enr.pooled
         sub = enr[["cluster", "n_obs", "n_exp", "log2_enr", "p_value"]].copy()
         sub.insert(0, "cell_type", ct)
         rows.append(sub)
@@ -1863,6 +1978,10 @@ def cell_ecm_enrichment_matrix(
     else:
         matrix["p_fdr"] = np.nan
         matrix["significant"] = False
+    if return_details:
+        return CellECMEnrichmentResult(
+            matrix, pd.concat(per_roi_rows, ignore_index=True),
+        )
     return matrix
 
 
@@ -2292,17 +2411,14 @@ def denoise_ecm_clusters(
     # 5. Spatial-coherence filter (cKDTree): each candidate must have at
     #    least `spatial_min_neighbours` OTHER candidates within
     #    `spatial_radius` px. Disabled when spatial_min_neighbours == 0.
-    relabel = candidate.copy()
-    if spatial_min_neighbours > 0 and candidate.any():
-        from scipy.spatial import cKDTree
+    from mantpy._analysis import _spatial_candidate_gate
 
-        cand_xy = patches.loc[candidate, ["x", "y"]].to_numpy(dtype=float)
-        tree = cKDTree(cand_xy)
-        counts = tree.query_ball_point(cand_xy, spatial_radius, return_length=True)
-        # Subtract 1 because each candidate matches itself at d=0.
-        keep = (np.asarray(counts) - 1) >= spatial_min_neighbours
-        relabel = np.zeros_like(candidate)
-        relabel[np.where(candidate)[0][keep]] = True
+    relabel = _spatial_candidate_gate(
+        candidate,
+        patches[["x", "y"]].to_numpy(dtype=float) if spatial_min_neighbours > 0 else None,
+        spatial_radius,
+        spatial_min_neighbours,
+    )
 
     denoised = actual.copy()
     denoised[relabel] = pred[relabel]

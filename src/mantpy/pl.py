@@ -60,6 +60,7 @@ __all__ = [
     "niche_bubble_table",
     "node_value_overlay",
     "patch_domain_map",
+    "patch_map",
     "plot_cluster_map",
     "plot_delta_masked",
     "plot_lesion_metric_view",
@@ -2477,6 +2478,7 @@ def cell_ecm_enrichment_heatmap(
 # Re-export plotting helpers so users discover them on `mt.pl.<name>`.
 # Kept at end-of-file (E402) to preserve the package import order.
 # ----------------------------------------------------------------------
+from mantpy._patch_map import patch_map  # noqa: E402
 from mantpy._plot_helpers import (  # noqa: E402  imported after core plotters
     cell_ecm_enrichment_bars,
     channel_overlay_on_neighbours,

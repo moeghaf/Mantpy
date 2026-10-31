@@ -74,6 +74,7 @@ patches, while `mantpy.pp.normalize` provides channel-level transformations.
     ECMLeidenResolutionSelection
     ECMPatchSummary
     PatchComparison
+    ImageNormalizer
     annotate_structure
     attach_ecm_patches
     apply_ecm_label_overlay
@@ -125,10 +126,13 @@ Geometric. `mantpy.gr.build_patch_graph` returns a dict-compatible
     ensure_cell_ecm_graph
     exp_neg_dist
     extract_components_radius_reconnect
+    extract_components_existing
+    joint_graph_from_connectivities
     joint_graph_summary
     largest_component_radius_reconnect
     to_hetero_pyg
     to_pyg
+    to_networkx
 ```
 
 ## Analysis tools (`mantpy.tl`)
@@ -144,7 +148,13 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     AblationROCResult
     CentralVoidResult
     CellECMContactResult
+    CellECMEnrichmentResult
     ClusterCompositionResult
+    ClusterCompositionDetails
+    ComponentSummaryResult
+    ContactMarkerContrastResult
+    CooccurrenceDetails
+    LabelReconstructionResult
     CooccurrencePermResult
     ECMNeighbourAgreementSummary
     GraphSmoothingResult
@@ -162,6 +172,8 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     cluster_cooccurrence
     cluster_cooccurrence_permutation_test
     compute_cluster_composition
+    component_summary
+    contact_marker_contrast
     cross_compartment_ablation
     denoise_ecm_clusters
     denoise_held_out_roi
@@ -178,6 +190,8 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     loo_pristine_flag_rate
     loo_reconstruction_evaluation
     neighbourhood_clustering
+    neighbourhood_features
+    reconstruct_labels
     pick_representative_samples
     score_partition
     select_n_domains
@@ -223,6 +237,7 @@ Visualise graphs, interactions, clusters, images, and learned representations.
     niche_bubble_table
     node_value_overlay
     patch_domain_map
+    patch_map
     plot_cluster_map
     plot_delta_masked
     plot_lesion_metric_view
@@ -377,4 +392,9 @@ relevant optional extra before using these APIs.
     build_ohe_cluster_graphs
     encode_graphmae
     encode_patches
+    GraphClassifierFit
+    NodeAttribution
+    train_node_classifier
+    node_integrated_gradients
+    node_classification_loss
 ```

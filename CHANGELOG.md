@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning][].
 
 ## [Unreleased]
 
+### Added
+
+- Configurable patch encoders with custom PyTorch backbones, heads, augmentations,
+  optimizers, losses and raw embedding export.
+- GraphMAE training history, callbacks and explicit latent scaling.
+- Reusable classifier fitting, biological-unit splits, ROI-balanced loss and
+  integrated-gradient results with seed-level attributions.
+- Biological-unit composition and detailed co-occurrence summaries,
+  neighbourhood features, contact-marker contrasts, component membership and
+  probability-based label reconstruction.
+- Fitted image normalization for training and held-out images, tiles-only patch
+  extraction, supplied sparse graph adapters and ID-aligned patch maps.
+- Explicit natural-log distance features and optional directed float64 edge
+  standardization for reproducing recorded graph representations.
+
 ## [1.0.2] - 2026-10-28
 
 Release accompanying the Nature Communications submission. The source is

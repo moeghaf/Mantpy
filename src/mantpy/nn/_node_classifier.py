@@ -23,7 +23,7 @@ Requires the ``[gnn]`` extra: ``pip install "mantpy[gnn]"``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -33,7 +33,7 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    from torch_geometric.data import Batch, Data
+    from torch_geometric.data import Data
     from torch_geometric.nn import SAGEConv
 except ImportError as e:  # pragma: no cover - exercised only without the extra
     raise ImportError('NodeClassifier requires PyTorch Geometric. Install with: pip install "mantpy[gnn]"') from e
@@ -43,6 +43,7 @@ from sklearn.model_selection import StratifiedKFold
 
 from mantpy._constants import ECM_CLUSTER_COL, ECM_GRAPH_KEY
 from mantpy.ds import Bunch
+from mantpy.nn._training import NodeAttribution, node_integrated_gradients, train_node_classifier
 
 _log = logging.getLogger(__name__)
 
@@ -222,6 +223,7 @@ def build_ohe_cluster_graphs(
             pos=torch.from_numpy(np.stack([xs, ys], axis=1)),
         )
         g.cluster = torch.from_numpy(cl).long()
+        g.node_ids = [str(node) for (node, _), included in zip(nodes, keep, strict=True) if included]
         g.y = torch.tensor(cls_to_idx[sample_meta.loc[roi, group_col]], dtype=torch.long)
         g.roi_id = roi
         graphs.append(g)
@@ -261,11 +263,12 @@ class _NodeSAGE(nn.Module):
 class _HeldOutFit:
     """One seed/fold model and its train-fold-only feature transform."""
 
-    net: _NodeSAGE
+    net: nn.Module
     mu: torch.Tensor
     sd: torch.Tensor
     seed: int
     fold: int
+    history: dict | None = None
 
 
 class NodeClassifier:
@@ -307,7 +310,11 @@ class NodeClassifier:
         n_layers: int = 2,
         dropout: float = 0.2,
         device: str | None = None,
+        model_factory: Callable | None = None,
+        model_kwargs: Mapping | None = None,
     ):
+        if not graphs:
+            raise ValueError("graphs must be non-empty.")
         self._graphs = graphs
         self._labels = np.asarray(labels if labels is not None else [int(g.y.item()) for g in graphs])
         self._in_channels = int(graphs[0].x.size(1))
@@ -319,6 +326,8 @@ class NodeClassifier:
             "n_layers": n_layers,
             "dropout": dropout,
         }
+        self._model_factory = model_factory
+        self._model_kwargs = dict(model_kwargs or {})
         self._device = (
             torch.device(device) if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
@@ -330,6 +339,7 @@ class NodeClassifier:
         self._seeds: tuple[int, ...] = ()
         self._splits: list[tuple[np.ndarray, np.ndarray]] = []
         self._is_fit = False
+        self._training_records: list[dict] = []
 
     # ------------------------------------------------------------------
     def _standardize_stats(
@@ -356,6 +366,19 @@ class NodeClassifier:
         groups: Sequence[str] | None = None,
         splits: Sequence[tuple[Sequence[int], Sequence[int]]] | None = None,
         verbose: bool = False,
+        loss_reduction: str = "node",
+        class_weight="balanced",
+        roi_class_weight_mode: str = "after",
+        standardize: bool = True,
+        reset_seed_per_fit: bool = False,
+        optimizer_factory: Callable | None = None,
+        optimizer_kwargs: Mapping | None = None,
+        scheduler: str | None = None,
+        scheduler_factory: Callable | None = None,
+        scheduler_kwargs: Mapping | None = None,
+        input_dropout: float = 0.0,
+        label_smoothing: float = 0.0,
+        callback: Callable | None = None,
     ) -> NodeClassifier:
         """Train cross-validated models and store out-of-fold probabilities.
 
@@ -366,21 +389,20 @@ class NodeClassifier:
         held-out prediction and integrated gradients. ``seeds`` fits an ensemble
         over the same fixed folds and averages its out-of-fold probabilities.
         """
-        if groups is not None and splits is not None:
-            raise ValueError("Pass groups or splits, not both.")
         if groups is not None:
             groups_array = np.asarray(groups, dtype=object)
             if groups_array.shape != self._labels.shape:
                 raise ValueError("groups must have one value per graph.")
-            resolved_splits = _stratified_group_folds(
-                self._labels,
-                groups_array,
-                n_splits=n_splits,
-            )
             self._groups = groups_array.astype(str)
-        elif splits is not None:
-            resolved_splits = [(np.asarray(train, dtype=int), np.asarray(test, dtype=int)) for train, test in splits]
+            for group in np.unique(self._groups):
+                if len(np.unique(self._labels[self._groups == group])) != 1:
+                    raise ValueError(f"Group {group!r} has more than one class label.")
+        else:
             self._groups = None
+        if splits is not None:
+            resolved_splits = [(np.asarray(train, dtype=int), np.asarray(test, dtype=int)) for train, test in splits]
+        elif groups is not None:
+            resolved_splits = _stratified_group_folds(self._labels, self._groups, n_splits=n_splits)
         else:
             splitter = StratifiedKFold(
                 n_splits=n_splits,
@@ -391,7 +413,7 @@ class NodeClassifier:
             self._groups = None
         self._validate_splits(resolved_splits)
 
-        resolved_seeds = tuple(int(value) for value in (seeds or (seed,)))
+        resolved_seeds = tuple(int(value) for value in ((seed,) if seeds is None else seeds))
         if not resolved_seeds:
             raise ValueError("At least one model seed is required.")
         if len(set(resolved_seeds)) != len(resolved_seeds):
@@ -399,6 +421,7 @@ class NodeClassifier:
 
         self._held_out_fits = {index: [] for index in range(len(self._graphs))}
         self._oof_by_seed = {}
+        self._training_records = []
         fold_ids = np.full(len(self._graphs), -1, dtype=int)
         for fold, (_, test_indices) in enumerate(resolved_splits, start=1):
             fold_ids[test_indices] = fold
@@ -411,43 +434,27 @@ class NodeClassifier:
                 resolved_splits,
                 start=1,
             ):
-                mu, sd = self._standardize_stats(train_indices)
-                net = _NodeSAGE(**self._arch).to(self._device)
-                optimizer = torch.optim.Adam(
-                    net.parameters(),
-                    lr=lr,
-                    weight_decay=weight_decay,
-                )
-                batch = Batch.from_data_list([self._graphs[index] for index in train_indices]).to(self._device)
-                batch_x = (batch.x - mu) / sd
-                graph_targets = torch.as_tensor(
+                fitted = train_node_classifier(
+                    [self._graphs[index] for index in train_indices],
                     self._labels[train_indices],
-                    dtype=torch.long,
-                    device=self._device,
+                    model_factory=self._model_factory or _NodeSAGE,
+                    model_kwargs=self._model_kwargs if self._model_factory else self._arch,
+                    n_classes=self._n_classes, epochs=epochs, lr=lr, weight_decay=weight_decay,
+                    seed=model_seed if reset_seed_per_fit else None,
+                    loss_reduction=loss_reduction, class_weight=class_weight,
+                    roi_class_weight_mode=roi_class_weight_mode, standardize=standardize,
+                    device=self._device, optimizer_factory=optimizer_factory,
+                    optimizer_kwargs=optimizer_kwargs, scheduler=scheduler,
+                    scheduler_factory=scheduler_factory, scheduler_kwargs=scheduler_kwargs,
+                    input_dropout=input_dropout, label_smoothing=label_smoothing,
+                    callback=callback,
                 )
-                batch_y = graph_targets[batch.batch]
-                counts = np.bincount(
-                    self._labels[train_indices],
-                    minlength=self._n_classes,
-                ).astype(float)
-                weights = torch.tensor(
-                    counts.sum() / (counts + 1e-6),
-                    dtype=torch.float32,
-                    device=self._device,
+                net, mu, sd = fitted.model, fitted.mean, fitted.scale
+                self._training_records.extend(
+                    {"seed": model_seed, "fold": fold, "epoch": epoch + 1, "train_loss": value}
+                    for epoch, value in enumerate(fitted.history["train_loss"])
                 )
-                weights = weights / weights.sum() * self._n_classes
-                net.train()
-                for _ in range(epochs):
-                    optimizer.zero_grad()
-                    loss = F.cross_entropy(
-                        net(batch_x, batch.edge_index),
-                        batch_y,
-                        weight=weights,
-                    )
-                    loss.backward()
-                    optimizer.step()
-                net.eval()
-                held_out_fit = _HeldOutFit(net, mu, sd, model_seed, fold)
+                held_out_fit = _HeldOutFit(net, mu, sd, model_seed, fold, fitted.history)
                 with torch.no_grad():
                     for index in test_indices:
                         graph = self._graphs[index]
@@ -504,8 +511,8 @@ class NodeClassifier:
                 raise ValueError("Train and test indices overlap within a fold.")
             if set(self._labels[train_indices]) != expected_classes:
                 raise ValueError("Every training fold must contain every class.")
-            if set(self._labels[test_indices]) != expected_classes:
-                raise ValueError("Every test fold must contain every class.")
+            if not set(self._labels[test_indices]).issubset(expected_classes):
+                raise ValueError("Test labels must lie within the classifier's class vocabulary.")
             if self._groups is not None:
                 train_groups = set(self._groups[train_indices])
                 test_groups = set(self._groups[test_indices])
@@ -812,7 +819,10 @@ class NodeClassifier:
         )
 
     # ------------------------------------------------------------------
-    def integrated_gradients(self, index: int, target_class: int, *, n_steps: int = 50):
+    def integrated_gradients(
+        self, index: int, target_class: int, *, n_steps: int = 50,
+        internal_batch_size: int | None = None, return_details: bool = False,
+    ):
         """Per-node integrated gradients toward ``target_class`` for graph ``index``.
 
         Attributes the mean (over nodes) ``target_class`` logit to the node
@@ -830,41 +840,36 @@ class NodeClassifier:
             ``feat_attr`` by ``graph.cluster`` gives per-cluster importance.
         """
         self._check_fit()
-        from captum.attr import IntegratedGradients
-
         fits = self._held_out_fits.get(index, [])
         if not fits:
             raise ValueError(f"graph {index} was never held out; call fit() first")
         g = self._graphs[index]
-        ei = g.edge_index.to(self._device)
         attrs = []
+        deltas = []
         for fit in fits:
-            fit.net.eval()
-            x = ((g.x.to(self._device) - fit.mu) / fit.sd).detach()
-
-            def _fwd(
-                xb: torch.Tensor,
-                held_out_fit: _HeldOutFit = fit,
-            ) -> torch.Tensor:
-                outputs = [
-                    held_out_fit.net(xb[batch], ei)[:, target_class].mean().unsqueeze(0) for batch in range(xb.shape[0])
-                ]
-                return torch.cat(outputs)
-
-            ig = IntegratedGradients(_fwd)
-            attrs.append(
-                ig.attribute(
-                    x.unsqueeze(0),
-                    baselines=torch.zeros_like(x).unsqueeze(0),
-                    n_steps=n_steps,
-                )
-                .squeeze(0)
-                .detach()
-                .cpu()
-                .numpy()
+            result = node_integrated_gradients(
+                fit.net, g, mean=fit.mu, scale=fit.sd, target_class=target_class,
+                n_steps=n_steps, internal_batch_size=internal_batch_size,
+                return_details=return_details,
             )
+            if return_details:
+                attrs.append(result.signed)
+                deltas.append(result.convergence_delta)
+            else:
+                attrs.append(result[1])
         attr = np.mean(attrs, axis=0)
+        if return_details:
+            return NodeAttribution(
+                signed=attr, node_importance=np.abs(attr).sum(1),
+                convergence_delta=np.concatenate(deltas), target_class=int(target_class),
+                node_ids=result.node_ids, per_seed=tuple(attrs), seeds=tuple(fit.seed for fit in fits),
+            )
         return np.abs(attr).sum(1), attr
+
+    @property
+    def training_history(self) -> pd.DataFrame:
+        """Detached epoch losses keyed by seed and fold."""
+        return pd.DataFrame(self._training_records)
 
     def cluster_importance(self, *, n_steps: int = 50) -> pd.DataFrame:
         """Per-class × per-cluster integrated-gradients importance over all ROIs.

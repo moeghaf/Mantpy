@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning][].
 - Explicit natural-log distance features and optional directed float64 edge
   standardization for reproducing recorded graph representations.
 
+### Fixed
+
+- Patch maps support read-only masks returned by Pandas 3.1.
+
 ## [1.0.2] - 2026-10-28
 
 Release accompanying the Nature Communications submission. The source is

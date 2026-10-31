@@ -99,7 +99,7 @@ def patch_map(
     shape = tuple(int(value) for value in shape)
     if len(shape) != 2 or min(shape) < 1 or (ys >= shape[0]).any() or (xs >= shape[1]).any():
         raise ValueError("shape must contain every patch-grid position.")
-    valid = values.notna().to_numpy()
+    valid = values.notna().to_numpy(copy=True)
     colors = np.tile(to_rgb(background), (len(table), 1))
     scalar = None
     if categorical:

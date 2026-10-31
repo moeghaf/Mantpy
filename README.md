@@ -38,7 +38,7 @@ the package does not require a GPU for graph construction or descriptive analysi
 pip install mantpy
 ```
 
-The current release is 1.0.2 ([PyPI][pypi], [GitHub release v1.0.2][release]);
+The current release is 1.1.0 ([PyPI][pypi], [GitHub release v1.1.0][release]);
 the [changelog][] lists what changed between releases.
 
 Optional extras add heavier dependencies only when needed:
@@ -147,7 +147,7 @@ To report a bug, use the [issue tracker][].
 [issue tracker]: https://github.com/moeghaf/Mantpy/issues
 [tests]: https://github.com/moeghaf/Mantpy/actions/workflows/test.yaml
 [pypi]: https://pypi.org/project/mantpy/
-[release]: https://github.com/moeghaf/Mantpy/releases/tag/v1.0.2
+[release]: https://github.com/moeghaf/Mantpy/releases/tag/v1.1.0
 [documentation]: https://mantpy.readthedocs.io
 [changelog]: https://mantpy.readthedocs.io/en/latest/changelog.html
 [api documentation]: https://mantpy.readthedocs.io/en/latest/api.html

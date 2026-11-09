@@ -97,6 +97,24 @@ Signed seed attributions are averaged before computing their absolute spatial
 magnitude. The standalone `node_integrated_gradients` supports saved models and
 fitted transforms without refitting.
 
+```python
+importance = classifier.attribution_table(target_class=1, n_steps=50)
+baseline = classifier.composition_baseline(C=1.0, level="group")
+```
+
+`attribution_table` runs integrated gradients for every graph, or for the
+positions in `indices`, and returns one row per node: `graph_index`,
+`sample_id`, `group_id`, `class_idx`, `fold`, `node_id`, `x`, `y`, `cluster`,
+`node_importance` and `max_abs_delta`, the largest absolute completeness delta
+of the graph. Each graph is explained by the networks that held it out.
+
+`composition_baseline` is a reference without graph structure. It fits one
+logistic regression per fitted fold on per-graph cluster fractions, or on
+supplied `features`, and returns held-out predictions in the columns of
+`prediction_table`. The folds are those of the classifier, so both models hold
+out the same graphs. `C` is one value, one value per fold, or a mapping from
+held-out group to value. Neither method stores anything on the classifier.
+
 `NeighbourCompositionBaseline(estimator=...)` clones a compatible scikit-learn
 classifier instead of always using logistic regression. `transform` exposes
 its fitted-vocabulary neighborhood proportions with stable column names and

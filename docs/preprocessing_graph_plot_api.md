@@ -54,6 +54,35 @@ This retains foreground selection, grid positions, original patch IDs and
 tiles. The observation feature matrix has zero columns and the descriptor
 backend does not run.
 
+## Tiles and learned embeddings for an extracted cohort
+
+```python
+tiles = mt.pp.ecm_patch_tiles(cohort, normalised_images, subset="signal")
+embedding = encoder.fit(tiles).transform(tiles, standardize=False)
+clusters = mt.pp.cluster_ecm_patches(
+    cohort, n_clusters=n_clusters, subset="signal",
+    embedding=embedding, order_by="size",
+)
+```
+
+`ecm_patch_tiles` cuts the pixel block of every row of `uns["ecm_patches"]`
+from the image it was extracted from and returns one float32 array of shape
+`(patches, ECM channels, patch_size, patch_size)`. Rows follow cohort order and
+then patch-table row order. `subset="signal"` keeps the patches with a
+non-negative label. Images hold the full panel or the ECM channels only; pass
+the pixel values that were given to the extraction. The patch size is read from
+the extraction log unless `patch_size` is supplied. Nothing is written.
+
+`cluster_ecm_patches(embedding=...)` clusters a supplied patch-by-feature
+matrix in place of the patch-table features. It needs one row per selected
+patch in the same order as the tiles, as one array or as a mapping with one
+array per sample. The scaler is fitted on those rows only, and non-finite
+values raise an error. `order_by="size"` numbers the clusters from the largest
+to the smallest; `"label"` keeps the K-means model labels. Both options default
+to `None`, which keeps the previous labels and provenance. When either is used,
+`uns["ecm_clustering"]` also records `feature_source`, `label_order` and
+`label_mapping` (model label to written label).
+
 ## Adopt existing graph connections
 
 ```python

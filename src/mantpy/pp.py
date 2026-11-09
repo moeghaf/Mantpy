@@ -19,6 +19,7 @@ from mantpy._constants import (
     ECM_IMAGE_KEY,
     ECM_PATCHES_KEY,
     IMAGE_CONTAINER_KEY,
+    MANTPY_UNS_KEY,
     RAW_LAYER,
 )
 from mantpy._core._patching import (
@@ -57,6 +58,7 @@ __all__ = [
     "compare_ecm_patches",
     "ecm_patches_from_images",
     "ecm_patch_summary",
+    "ecm_patch_tiles",
     "ecm_label_overlay_summary",
     "extract_ecm_patches",
     "extract_ecm_patches_cohort",
@@ -1930,6 +1932,45 @@ def select_ecm_leiden_resolution(
     )
 
 
+def _selected_patch_embedding(
+    embedding: np.ndarray | Mapping[str, np.ndarray],
+    adatas: Mapping[str, AnnData],
+    selected_counts: Sequence[int],
+    subset: str,
+) -> np.ndarray:
+    """Validate a patch embedding and stack it in cohort row order as float32."""
+    if isinstance(embedding, Mapping):
+        missing = sorted(set(adatas) - set(embedding))
+        extra = sorted(set(embedding) - set(adatas))
+        if missing or extra:
+            raise ValueError(f"embedding keys differ from adatas; missing={missing}, extra={extra}.")
+        blocks: list[np.ndarray] = []
+        for sample, n_selected in zip(adatas, selected_counts, strict=True):
+            block = np.asarray(embedding[sample])
+            if block.ndim != 2:
+                raise ValueError("embedding must be a 2-D patch-by-feature array.")
+            if len(block) != n_selected:
+                raise ValueError(
+                    f"Sample {sample!r}: embedding has {len(block)} rows but subset={subset!r} selects "
+                    f"{n_selected} patches."
+                )
+            blocks.append(block)
+        if len({block.shape[1] for block in blocks}) != 1:
+            raise ValueError("embedding arrays must have the same number of columns.")
+        matrix = np.vstack(blocks)
+    else:
+        matrix = np.asarray(embedding)
+        if matrix.ndim != 2:
+            raise ValueError("embedding must be a 2-D patch-by-feature array.")
+        n_selected = int(sum(selected_counts))
+        if len(matrix) != n_selected:
+            raise ValueError(f"embedding has {len(matrix)} rows but subset={subset!r} selects {n_selected} patches.")
+    matrix = matrix.astype(np.float32, copy=False)
+    if not np.isfinite(matrix).all():
+        raise ValueError("embedding contains NaN or infinite values.")
+    return matrix
+
+
 def cluster_ecm_patches(
     adatas: Mapping[str, AnnData],
     *,
@@ -1943,8 +1984,107 @@ def cluster_ecm_patches(
     resolution: float = 0.3,
     flavor: Literal["leidenalg", "igraph"] = "leidenalg",
     cluster_key: str = "ecm_cluster",
+    embedding: np.ndarray | Mapping[str, np.ndarray] | None = None,
+    order_by: Literal["size", "label"] | None = None,
 ) -> ECMClusteringResult:
-    """Cluster pooled ECM patches and write cohort-consistent labels."""
+    """Cluster pooled ECM patches and write cohort-consistent labels.
+
+    The ``feat_*`` columns of every ``uns['ecm_patches']`` table are pooled in
+    ``adatas`` order, set to zero where they are not finite, standardised with
+    one ``StandardScaler`` fitted on every row, and clustered once for the
+    whole cohort. Rows that ``subset='signal'`` leaves out receive the label
+    ``-1``.
+
+    With ``embedding``, the supplied matrix is clustered in place of the
+    patch-table features. It holds one row per selected patch: every patch for
+    ``subset='all'``, or the patches with a non-negative label for
+    ``subset='signal'``, in ``adatas`` order and then patch-table row order.
+    This is the row order of :func:`ecm_patch_tiles` and of
+    ``mt.nn.PatchEncoder.transform`` applied to its tiles. The scaler is then
+    fitted on the selected rows only, unlike the patch-table path, which fits
+    it on every row including those that ``subset='signal'`` leaves out.
+
+    Parameters
+    ----------
+    adatas
+        Mapping of sample identifier to an AnnData with
+        ``uns['ecm_patches']``. The patch tables are updated in place.
+    n_clusters
+        Number of K-means clusters. Required for ``method='kmeans'`` and
+        ignored for ``method='leiden'``.
+    method
+        ``"kmeans"`` (default) or ``"leiden"``.
+    subset
+        ``"all"`` clusters every patch. ``"signal"`` clusters only the patches
+        whose current ``cluster_key`` label is non-negative and keeps ``-1``
+        on the others.
+    feature_prefix
+        Prefix of the patch-feature columns.
+    random_state
+        Seed of K-means, or of the neighbour graph and Leiden.
+    n_init
+        Number of K-means initialisations.
+    n_neighbors
+        Number of neighbours in the Leiden neighbour graph.
+    resolution
+        Leiden resolution.
+    flavor
+        Leiden backend, ``"leidenalg"`` or ``"igraph"``.
+    cluster_key
+        Patch-table column that receives the labels. With ``subset='signal'``
+        it is also the column that defines the selected patches.
+    embedding
+        Optional patch-by-feature matrix to cluster in place of the
+        patch-table features, for example the output of
+        ``mt.nn.PatchEncoder.transform``. Pass one array for the whole cohort
+        or a mapping with one array per sample; a mapping must have the keys
+        of ``adatas`` and is stacked in ``adatas`` order. The values are cast
+        to float32 and must be finite. The patch-table features are still
+        validated, and still give ``component_means`` when they include
+        ``mean`` features.
+    order_by
+        Numbering of the cluster labels. ``None`` (default) keeps the
+        historical numbering: K-means labels in the order of the fitted model
+        and Leiden labels by decreasing size. ``"size"`` numbers the clusters
+        from the largest to the smallest, with ties resolved in favour of the
+        lower model label. ``"label"`` keeps the model labels and is not
+        available for ``method='leiden'``.
+
+    Writes
+    ------
+    ``adata.uns['ecm_patches'][cluster_key]``
+        int32 labels, ``-1`` for patches outside ``subset``.
+    ``adata.uns['ecm_clustering']``
+        Provenance of the clustering. When ``embedding`` or ``order_by`` is
+        used it also holds ``feature_source`` (``'embedding'`` or
+        ``'patch_table'``), ``label_order`` (``'model'`` or
+        ``'descending_size_then_original_label'``) and ``label_mapping``
+        (model label to written label).
+    ``adata.uns['mantpy']['pp']['cluster_ecm_patches']``
+        Params log with the same content.
+
+    Returns
+    -------
+    ECMClusteringResult
+        The fitted scaler and model with the component sizes and means.
+        ``component_sizes`` and ``component_means`` follow the written labels;
+        ``model.labels_`` and ``model.cluster_centers_`` stay in model order.
+        ``feature_columns`` is ``('embedding_0', ...)`` when ``embedding`` is
+        given.
+
+    Raises
+    ------
+    ValueError
+        If an argument is outside its allowed values, the cohort or the
+        selection is empty, ``n_clusters`` exceeds the number of selected
+        patches, or ``embedding`` is not a finite two-dimensional matrix with
+        one row per selected patch.
+    KeyError
+        If a sample has no ``uns['ecm_patches']``, or no ``cluster_key``
+        column when ``subset='signal'``.
+    ImportError
+        If ``method='leiden'`` is requested without scanpy.
+    """
     if method not in {"kmeans", "leiden"}:
         raise ValueError("method must be 'kmeans' or 'leiden'.")
     if subset not in {"all", "signal"}:
@@ -1961,6 +2101,10 @@ def cluster_ecm_patches(
             raise ValueError("resolution must be a finite positive number.")
         if flavor not in {"leidenalg", "igraph"}:
             raise ValueError("flavor must be 'leidenalg' or 'igraph'.")
+    if order_by not in {None, "size", "label"}:
+        raise ValueError("order_by must be None, 'size' or 'label'.")
+    if order_by == "label" and method == "leiden":
+        raise ValueError("order_by='label' is not available for method='leiden', which is always ordered by size.")
 
     from sklearn.cluster import KMeans
     from sklearn.preprocessing import StandardScaler
@@ -1969,9 +2113,10 @@ def cluster_ecm_patches(
     if not np.isfinite(pooled).all():
         pooled = np.nan_to_num(pooled, nan=0.0, posinf=0.0, neginf=0.0)
     scaler = StandardScaler()
-    standardized = scaler.fit_transform(pooled)
-    if standardized.dtype != np.float32:
-        standardized = standardized.astype(np.float32)
+    if embedding is None:
+        standardized = scaler.fit_transform(pooled)
+        if standardized.dtype != np.float32:
+            standardized = standardized.astype(np.float32)
 
     if subset == "all":
         active = np.ones(len(pooled), dtype=bool)
@@ -2005,15 +2150,40 @@ def cluster_ecm_patches(
             if isinstance(metadata, dict) and metadata.get("extractor") == "mean"
         )
 
+    standardization_subset = "all"
+    standardization_dtype = str(pooled.dtype)
+    if embedding is None:
+        standardized_active = standardized[active]
+    else:
+        selected_counts = tuple(int(block.sum()) for block in np.split(active, np.cumsum(lengths)[:-1]))
+        embedded = _selected_patch_embedding(embedding, adatas, selected_counts, subset)
+        # Unlike the patch-table path, the scaler sees the selected rows only:
+        # an embedding has no rows for the patches that the subset leaves out.
+        standardized_active = scaler.fit_transform(embedded)
+        if standardized_active.dtype != np.float32:
+            standardized_active = standardized_active.astype(np.float32)
+        standardization_subset = subset
+        standardization_dtype = str(embedded.dtype)
+        # From here on the feature columns name the clustered matrix.
+        feature_columns = tuple(f"embedding_{index}" for index in range(embedded.shape[1]))
+
     model: Any | None
+    label_mapping: dict[int, int]
     if method == "kmeans":
         if n_clusters is None:
             raise RuntimeError("n_clusters validation failed.")
         if n_clusters > n_active:
             raise ValueError(f"n_clusters={n_clusters} exceeds the {n_active} selected patches.")
-        model = KMeans(n_clusters, n_init=n_init, random_state=random_state).fit(standardized[active])
+        model = KMeans(n_clusters, n_init=n_init, random_state=random_state).fit(standardized_active)
         selected_labels = model.labels_.astype(np.int32)
         observed_n_clusters = int(n_clusters)
+        model_order = list(range(observed_n_clusters))
+        if order_by == "size":
+            model_sizes = np.bincount(selected_labels, minlength=observed_n_clusters)
+            model_order.sort(key=lambda component: (-int(model_sizes[component]), component))
+            # model_order[label] is the model label that is written as ``label``.
+            selected_labels = np.argsort(model_order).astype(np.int32)[selected_labels]
+        label_mapping = {model_label: label for label, model_label in enumerate(model_order)}
         if mean_feature_indices:
             raw_means = pooled[active][:, mean_feature_indices]
             component_means = tuple(
@@ -2021,6 +2191,7 @@ def cluster_ecm_patches(
             )
         else:
             component_means = tuple(float(value) for value in model.cluster_centers_.mean(axis=1))
+            component_means = tuple(component_means[model_label] for model_label in model_order)
     else:
         if n_active < 2:
             raise ValueError("Leiden clustering requires at least two selected patches.")
@@ -2029,7 +2200,7 @@ def cluster_ecm_patches(
         except ImportError as exc:
             raise ImportError("method='leiden' requires scanpy and a Leiden backend.") from exc
 
-        leiden_adata = AnnData(X=standardized[active].astype(np.float32, copy=False))
+        leiden_adata = AnnData(X=standardized_active.astype(np.float32, copy=False))
         sc.pp.neighbors(
             leiden_adata,
             n_neighbors=n_neighbors,
@@ -2060,6 +2231,7 @@ def cluster_ecm_patches(
             key=lambda item: (-item[1], item[0]),
         )
         relabel = {int(raw_label): label for label, (raw_label, _) in enumerate(ordered)}
+        label_mapping = relabel
         selected_labels = np.fromiter(
             (relabel[int(label)] for label in raw_labels),
             dtype=np.int32,
@@ -2108,8 +2280,8 @@ def cluster_ecm_patches(
         "cluster_counts": {str(label): count for label, count in cluster_counts},
         "standardization": {
             "method": "StandardScaler",
-            "fit_subset": "all",
-            "input_dtype": str(pooled.dtype),
+            "fit_subset": standardization_subset,
+            "input_dtype": standardization_dtype,
         },
         "versions": versions,
     }
@@ -2122,6 +2294,17 @@ def cluster_ecm_patches(
                 "resolution": float(resolution),
                 "flavor": flavor,
                 "label_order": "descending_size_then_original_label",
+            }
+        )
+    if embedding is not None or order_by is not None:
+        # Recorded only when a newer keyword is used, so that the provenance
+        # of a default call keeps the keys it has always had.
+        size_ordered = method == "leiden" or order_by == "size"
+        provenance.update(
+            {
+                "feature_source": "patch_table" if embedding is None else "embedding",
+                "label_order": "descending_size_then_original_label" if size_ordered else "model",
+                "label_mapping": {str(model_label): int(label) for model_label, label in sorted(label_mapping.items())},
             }
         )
 
@@ -2137,6 +2320,8 @@ def cluster_ecm_patches(
             "standardization": provenance["standardization"].copy(),
             "versions": provenance["versions"].copy(),
         }
+        if "label_mapping" in provenance:
+            adata.uns["ecm_clustering"]["label_mapping"] = provenance["label_mapping"].copy()
         _log_params(
             adata,
             "pp",
@@ -2263,6 +2448,173 @@ def compare_ecm_patches(
         feature_matches=feature_matches,
         label_matches=label_matches if labels_checked else None,
     )
+
+
+def ecm_patch_tiles(
+    adatas: Mapping[str, AnnData],
+    images: Mapping[str, np.ndarray | ImageContainer],
+    *,
+    subset: Literal["all", "signal"] = "all",
+    cluster_key: str = "ecm_cluster",
+    patch_size: int | None = None,
+) -> np.ndarray:
+    """Cut the pixel block of every ECM patch from the image it was extracted from.
+
+    Every row of ``uns['ecm_patches']`` stands for a square of ``patch_size``
+    pixels centred on its ``x`` and ``y``. This function returns those squares
+    of ECM-channel pixels as one array, the input of ``mt.nn.PatchEncoder``.
+    The rows follow ``adatas`` order and then patch-table row order, which is
+    the order in which :func:`cluster_ecm_patches` pools the patches, so that
+    features computed from the tiles can be passed to its ``embedding``
+    argument unchanged.
+
+    Parameters
+    ----------
+    adatas
+        Mapping of sample identifier to an AnnData with ``uns['ecm_patches']``
+        and ``var['is_ecm']``.
+    images
+        Mapping with the same keys as ``adatas``. Each image is channel-first
+        ``(C, H, W)`` and holds either the full panel (one channel per
+        variable, from which the ECM channels are taken) or the ECM channels
+        only, in panel order. A two-dimensional ``(H, W)`` image is one
+        channel. Pass the pixel values that were given to the extraction, that
+        is, the normalised images when the patches were extracted from
+        normalised images.
+    subset
+        ``"all"`` (default) returns every patch-table row. ``"signal"``
+        returns only the rows whose ``cluster_key`` label is non-negative.
+    cluster_key
+        Patch-table column that holds the labels read by ``subset='signal'``.
+    patch_size
+        Patch side length in pixels. By default it is read from the
+        ``extract_ecm_patches`` entry of each sample's params log.
+
+    Returns
+    -------
+    np.ndarray
+        float32 array of shape ``(n_rows, C_ecm, patch_size, patch_size)``. A
+        selection without rows gives shape ``(0, C_ecm, patch_size, patch_size)``.
+
+    Raises
+    ------
+    ValueError
+        If ``adatas`` is empty, the keys of ``adatas`` and ``images`` differ,
+        ``subset`` is unknown, the patch size is neither given nor logged or
+        differs between samples, an image has an unexpected shape or channel
+        count, the patch centres do not match the patch size, or a patch
+        window falls outside its image.
+    KeyError
+        If a sample has no ``uns['ecm_patches']``, or no ``cluster_key`` column
+        when ``subset='signal'``.
+
+    Notes
+    -----
+    The result takes ``n_rows * C_ecm * patch_size**2 * 4`` bytes: about
+    0.26 GB for 107,732 patches of six channels and 10 x 10 pixels. Nothing is
+    written to ``adatas``.
+    """
+    if not adatas:
+        raise ValueError("adatas is empty; expected at least one ECM sample.")
+    if set(adatas) != set(images):
+        missing_images = sorted(set(adatas) - set(images))
+        missing_adatas = sorted(set(images) - set(adatas))
+        raise ValueError(f"Cohort keys differ; missing images={missing_images}, missing AnnData={missing_adatas}.")
+    if subset not in {"all", "signal"}:
+        raise ValueError("subset must be 'all' or 'signal'.")
+    if patch_size is not None and patch_size < 1:
+        raise ValueError("patch_size must be at least 1.")
+
+    from mantpy.im import ImageContainer
+
+    if patch_size is None:
+        logged_sizes: set[int] = set()
+        for sample, adata in adatas.items():
+            logged = adata.uns.get(MANTPY_UNS_KEY, {}).get("pp", {}).get("extract_ecm_patches", {}).get("patch_size")
+            if logged is None:
+                raise ValueError(f"Sample {sample!r}: patch_size is not logged; pass patch_size=.")
+            logged_sizes.add(int(logged))
+        if len(logged_sizes) != 1:
+            raise ValueError("Samples were extracted with different patch sizes; pass patch_size=.")
+        size = logged_sizes.pop()
+    else:
+        size = int(patch_size)
+
+    # First pass: validate every sample and resolve its channels and window
+    # origins, so that no pixels are copied before the whole cohort is known
+    # to be consistent and the result can be allocated once.
+    plans: list[tuple[np.ndarray | ImageContainer, np.ndarray | None, np.ndarray, np.ndarray]] = []
+    n_ecm_channels: int | None = None
+    n_rows = 0
+    for sample, adata in adatas.items():
+        image = images[sample]
+        if not isinstance(image, ImageContainer):
+            image = np.asarray(image)
+            if image.ndim == 2:
+                image = image[np.newaxis]
+        shape = tuple(int(value) for value in image.shape)
+        if len(shape) != 3:
+            raise ValueError(f"Every image must be channel-first (C, H, W); got shape {shape}.")
+        n_channels, height, width = shape
+
+        if "is_ecm" not in adata.var.columns:
+            raise ValueError("Column 'is_ecm' not found in adata.var. Run `mt.read_imc(...)` first.")
+        ecm_indices = np.flatnonzero(adata.var["is_ecm"].values.astype(bool))
+        if len(ecm_indices) == 0:
+            raise ValueError("No ECM channels found (adata.var['is_ecm'] is all False). Check your panel definition.")
+        channels: np.ndarray | None
+        if n_channels == adata.n_vars:
+            channels = ecm_indices
+        elif n_channels == len(ecm_indices):
+            channels = None
+        else:
+            raise ValueError(
+                f"Sample {sample!r}: image has {n_channels} channels; expected {adata.n_vars} (full panel) "
+                f"or {len(ecm_indices)} (ECM only)."
+            )
+        if n_ecm_channels is None:
+            n_ecm_channels = len(ecm_indices)
+        elif len(ecm_indices) != n_ecm_channels:
+            raise ValueError(
+                f"Sample {sample!r} has {len(ecm_indices)} ECM channels but earlier samples have {n_ecm_channels}."
+            )
+
+        table = adata.uns.get(ECM_PATCHES_KEY)
+        if table is None:
+            raise KeyError(f"Sample {sample!r} has no uns[{ECM_PATCHES_KEY!r}].")
+        centres = table[["x", "y"]].to_numpy(dtype=float)
+        if subset == "signal":
+            if cluster_key not in table:
+                raise KeyError(f"Sample {sample!r} has no patch labels in {cluster_key!r}.")
+            centres = centres[table[cluster_key].to_numpy(dtype=int) >= 0]
+        # extract_patches stores the centre (x0 + x1) / 2 of each window, so
+        # the top-left pixel is recovered by stepping back half a patch.
+        origins = centres - size / 2.0
+        rounded = np.rint(origins)
+        if not (np.isfinite(origins).all() and np.isclose(origins, rounded, rtol=0.0, atol=1e-6).all()):
+            raise ValueError(f"Sample {sample!r}: patch centres are not on a {size}-pixel lattice.")
+        x0 = rounded[:, 0].astype(np.intp)
+        y0 = rounded[:, 1].astype(np.intp)
+        if len(x0) and (x0.min() < 0 or y0.min() < 0 or x0.max() + size > width or y0.max() + size > height):
+            raise ValueError(f"Sample {sample!r}: a patch window falls outside the image; check images and patch_size.")
+        plans.append((image, channels, x0, y0))
+        n_rows += len(x0)
+
+    # Second pass: copy the windows straight into the result.
+    tiles = np.empty((n_rows, n_ecm_channels or 0, size, size), dtype=np.float32)
+    offset = 0
+    for image, channels, x0, y0 in plans:
+        if not len(x0):
+            continue
+        if isinstance(image, ImageContainer):
+            ecm_pixels = (image if channels is None else image[channels.tolist()]).to_array()
+        else:
+            ecm_pixels = image if channels is None else image[channels]
+        # windows[channel, y, x] is the block whose top-left pixel is (y, x).
+        windows = np.lib.stride_tricks.sliding_window_view(ecm_pixels, (size, size), axis=(1, 2))
+        tiles[offset : offset + len(x0)] = np.moveaxis(windows, 0, 2)[y0, x0]
+        offset += len(x0)
+    return tiles
 
 
 # ---------------------------------------------------------------------------

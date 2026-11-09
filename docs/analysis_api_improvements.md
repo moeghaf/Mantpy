@@ -34,6 +34,26 @@ background labels can be supplied with `background_labels`.
 Empty foreground samples have zero fractions, consistent with the original
 default. Explicit `categories` retain absent states and their column order.
 
+The detailed result can contrast two sets of groups:
+
+```python
+contrast = composition.contrast(
+    case=case_groups, control=control_groups,
+    pseudocount=1e-3, min_fraction=0.01,
+)
+selected = mt.tl.top_enriched_cluster(
+    contrast, log2_col="log2_ratio", sig_col="present",
+)
+```
+
+Each unit has equal weight. The table has one row per cluster with
+`mean_case`, `mean_control`, their `difference`, `log2_ratio` (with the
+pseudocount added to both means), `min_case_fraction` and the unit counts.
+`present` marks clusters whose fraction reaches `min_fraction` in every case
+unit. The selector returns the present cluster with the largest positive
+`log2_ratio` and raises when there is none. The legacy two-item result has no
+`contrast` method.
+
 ## Co-occurrence counts and unit summaries
 
 ```python
@@ -183,6 +203,33 @@ and NaN medians. `pool_components` calculates medians over all components
 within a unit; `mean_roi_summary` averages ROI medians while summing their
 component counts. The original extraction records remain available in
 `records`. More topology metric families can be requested with `metrics`.
+
+## Patch tables and node scores by cluster
+
+```python
+patches = mt.tl.ecm_patch_table(
+    adatas, sample_meta=sample_meta, drop_background=True,
+)
+localisation = mt.tl.cluster_membership_correlation(
+    node_table, score_col="node_importance",
+    categories=cluster_order,
+)
+```
+
+`ecm_patch_table` stacks `uns["ecm_patches"]` of every sample into one long
+table. It keeps the non-feature columns, adds `sample_id` and `node_id`, and
+joins the columns of `sample_meta`, whose index also sets the sample order.
+`node_id` is the name of the patch in the ECM graph, taken before any
+filtering, so the table joins on `["sample_id", "node_id"]` to
+`component_summary(...).membership` and to node-level classifier results.
+`drop_background=True` keeps the patches with a non-negative label.
+
+`cluster_membership_correlation` takes a long table with one row per node. For
+every sample and cluster it returns the Pearson correlation between the score
+and the 0/1 indicator of belonging to that cluster, with the node counts. The
+value is NaN when the cluster has fewer than `min_cluster_nodes` nodes in the
+sample, holds every node of the sample, or the score is constant.
+Explicit `categories` retain clusters that are absent from a sample.
 
 ## Label reconstruction from probabilities
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -38,9 +39,12 @@ try:
 except ImportError as e:  # pragma: no cover - exercised only without the extra
     raise ImportError('NodeClassifier requires PyTorch Geometric. Install with: pip install "mantpy[gnn]"') from e
 
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix, f1_score
 from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
 
+from mantpy._analysis import _aligned
 from mantpy._constants import ECM_CLUSTER_COL, ECM_GRAPH_KEY
 from mantpy.ds import Bunch
 from mantpy.nn._training import NodeAttribution, node_integrated_gradients, train_node_classifier
@@ -95,6 +99,34 @@ def _stratified_group_folds(
             raise RuntimeError("A group appears in both train and test indices.")
         folds.append((train_indices, test_indices))
     return folds
+
+
+def _fold_logistic_probabilities(
+    features: np.ndarray,
+    labels: np.ndarray,
+    splits: Sequence[tuple[np.ndarray, np.ndarray]],
+    *,
+    C: Sequence[float],
+    n_classes: int,
+    max_iter: int = 10000,
+    standardize: bool = True,
+) -> np.ndarray:
+    """Held-out class probabilities from one logistic regression per fold.
+
+    For every ``(train, test)`` pair the scaler (when ``standardize``) and the
+    classifier are fitted on the training rows only, and the test rows receive
+    ``predict_proba``. ``C`` holds one inverse regularisation strength per fold.
+    Returns a ``(n_rows, n_classes)`` float64 array aligned to ``features``.
+    """
+    probability = np.zeros((len(labels), n_classes), dtype=float)
+    for (train_indices, test_indices), fold_c in zip(splits, C, strict=True):
+        train_x, test_x = features[train_indices], features[test_indices]
+        if standardize:
+            scaler = StandardScaler().fit(train_x)
+            train_x, test_x = scaler.transform(train_x), scaler.transform(test_x)
+        model = LogisticRegression(C=float(fold_c), max_iter=max_iter).fit(train_x, labels[train_indices])
+        probability[np.ix_(test_indices, model.classes_.astype(int))] = model.predict_proba(test_x)
+    return probability
 
 
 class ECMClusterGraphBundle(Bunch):
@@ -818,6 +850,192 @@ class NodeClassifier:
             ],
         )
 
+    def _composition_features(self) -> np.ndarray:
+        """Per-graph cluster fractions over the sorted cohort cluster vocabulary."""
+        graph_clusters = []
+        for index, graph in enumerate(self._graphs):
+            cluster = getattr(graph, "cluster", None)
+            if cluster is None:
+                raise ValueError(f"Graph {index} has no cluster labels; pass features=.")
+            graph_clusters.append(cluster.cpu().numpy())
+        clusters = sorted({int(cluster) for values in graph_clusters for cluster in values})
+        if not clusters:
+            raise ValueError("The graphs hold no cluster labels; pass features=.")
+        vocabulary = np.asarray(clusters)
+        fractions = np.zeros((len(graph_clusters), len(clusters)), dtype=float)
+        for row, values in enumerate(graph_clusters):
+            if values.size:
+                codes = np.searchsorted(vocabulary, values)
+                fractions[row] = np.bincount(codes, minlength=len(clusters)) / values.size
+        return fractions
+
+    def _baseline_features(self, features: np.ndarray | pd.DataFrame | None) -> np.ndarray:
+        """Resolve ``features`` to a finite graph-by-feature float64 matrix."""
+        if features is None:
+            return self._composition_features()
+        ids = []
+        for index, graph in enumerate(self._graphs):
+            roi_id = getattr(graph, "roi_id", None)
+            ids.append(str(index) if roi_id is None else roi_id)
+        matrix = np.asarray(_aligned(features, pd.Index(ids), "features"), dtype=float)
+        if matrix.ndim == 1:
+            matrix = matrix[:, None]
+        if matrix.ndim != 2 or not np.isfinite(matrix).all():
+            raise ValueError("features must be a finite graph-by-feature matrix.")
+        return matrix
+
+    def _baseline_fold_c(self, C: float | Sequence[float] | Mapping[str, float]) -> list[float]:
+        """Resolve ``C`` to one inverse regularisation strength per fitted fold."""
+        n_folds = len(self._splits)
+        if isinstance(C, Mapping):
+            if self._groups is None:
+                raise ValueError("C as a mapping requires groups passed to fit().")
+            by_group = {str(group): value for group, value in C.items()}
+            values = []
+            for fold, (_, test_indices) in enumerate(self._splits, start=1):
+                held_out = list(dict.fromkeys(self._groups[test_indices].tolist()))
+                if len(held_out) != 1:
+                    raise ValueError(
+                        f"C as a mapping needs one held-out group per fold; fold {fold} holds {len(held_out)}."
+                    )
+                if held_out[0] not in by_group:
+                    raise KeyError(f"C has no value for held-out group {held_out[0]!r}.")
+                values.append(by_group[held_out[0]])
+        elif np.ndim(C) == 0:
+            values = [C] * n_folds
+        else:
+            if np.ndim(C) != 1:
+                raise ValueError("C must be a number, a sequence with one value per fold, or a mapping.")
+            values = list(C)
+            if len(values) != n_folds:
+                raise ValueError(f"C has {len(values)} values but the classifier has {n_folds} folds.")
+        try:
+            resolved = [float(value) for value in values]
+        except (TypeError, ValueError):
+            raise ValueError("C must be finite and positive.") from None
+        if not all(np.isfinite(value) and value > 0 for value in resolved):
+            raise ValueError("C must be finite and positive.")
+        return resolved
+
+    def composition_baseline(
+        self,
+        *,
+        features: np.ndarray | pd.DataFrame | None = None,
+        C: float | Sequence[float] | Mapping[str, float] = 1.0,
+        max_iter: int = 10000,
+        standardize: bool = True,
+        level: Literal["graph", "group"] = "group",
+    ) -> pd.DataFrame:
+        """Return held-out predictions of a composition-only logistic regression.
+
+        A reference model that sees only one row of tabular features per graph
+        (by default the cluster fractions, with no graph structure). It is
+        evaluated on the folds this classifier was fitted with, so the graph
+        model and the reference hold out exactly the same graphs. For every
+        fold, in fit order, the scaler and a
+        :class:`sklearn.linear_model.LogisticRegression` (L2 penalty, ``lbfgs``;
+        all settings other than ``C`` and ``max_iter`` at their scikit-learn
+        defaults) are fitted on the training graphs only, and the held-out
+        graphs receive ``predict_proba``. Group probabilities are the equal-weight
+        mean of the graph probabilities within each group, as in
+        :meth:`prediction_table`.
+
+        Parameters
+        ----------
+        features
+            Per-graph feature matrix. ``None`` (default) uses each graph's cluster
+            fractions: the counts of ``graph.cluster`` over the sorted cluster ids
+            seen across all graphs, divided by the graph's node count (all zeros
+            for a graph without nodes). An array is positional to the graphs. A
+            :class:`pandas.DataFrame` is aligned on ``graph.roi_id`` (or on the
+            graph index as a string where a graph has no ``roi_id``), so its row
+            order is free.
+        C
+            Inverse regularisation strength. One number is used for every fold; a
+            sequence gives one value per fold in fit order; a mapping gives one
+            value per held-out group and requires that ``groups`` was passed to
+            :meth:`fit` and that every fold holds out a single group.
+        max_iter
+            Solver iteration cap of the logistic regression.
+        standardize
+            When ``True`` (default), features are standardised with the mean and
+            standard deviation of each fold's training graphs.
+        level
+            ``'group'`` (default) reports one row per group passed to :meth:`fit`;
+            ``'graph'`` reports one row per graph.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The columns of :meth:`prediction_table`: ``estimate`` (always
+            ``'composition_baseline'``), ``seed`` (always ``None``), ``unit_id``,
+            ``fold``, ``true_class_idx``, ``predicted_class_idx``, ``correct`` and
+            one ``probability_class_<k>`` column per class. Rows follow the order
+            in which the units first appear among the graphs. Nothing is stored
+            on the classifier.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        ValueError
+            If ``level`` is not ``'graph'`` or ``'group'``; if ``level='group'``
+            and no groups were passed to :meth:`fit`; if ``C`` is not finite and
+            positive, is a sequence whose length differs from the number of
+            folds, or is a mapping without fitted groups or with a fold holding
+            out more than one group; or if ``features`` does not have one finite
+            row per graph.
+        KeyError
+            If ``C`` is a mapping without a value for a held-out group.
+        """
+        self._check_fit()
+        if level not in {"graph", "group"}:
+            raise ValueError("level must be 'graph' or 'group'.")
+        if level == "group" and self._groups is None:
+            raise ValueError("Group predictions require groups passed to fit().")
+        fold_c = self._baseline_fold_c(C)
+        matrix = self._baseline_features(features)
+        graph_probability = _fold_logistic_probabilities(
+            matrix,
+            self._labels,
+            self._splits,
+            C=fold_c,
+            n_classes=self._n_classes,
+            max_iter=max_iter,
+            standardize=standardize,
+        )
+        ids, true_labels, predictions, probabilities = self._prediction_level(
+            [values[None, :] for values in graph_probability],
+            self._labels,
+            self._groups if level == "group" else None,
+        )
+        rows = []
+        for index, unit_id in enumerate(ids):
+            if level == "group":
+                group_folds = np.unique(self._fold_ids[self._groups == unit_id])
+                if len(group_folds) != 1:  # pragma: no cover - validated splits
+                    raise RuntimeError(f"Group {unit_id!r} spans folds.")
+                fold = int(group_folds[0])
+            else:
+                fold = int(self._fold_ids[int(unit_id)])
+            row = {
+                "estimate": "composition_baseline",
+                "seed": None,
+                "unit_id": str(unit_id),
+                "fold": fold,
+                "true_class_idx": int(true_labels[index]),
+                "predicted_class_idx": int(predictions[index]),
+                "correct": bool(true_labels[index] == predictions[index]),
+            }
+            row.update(
+                {
+                    f"probability_class_{class_index}": float(probabilities[index, class_index])
+                    for class_index in range(self._n_classes)
+                }
+            )
+            rows.append(row)
+        return pd.DataFrame(rows)
+
     # ------------------------------------------------------------------
     def integrated_gradients(
         self, index: int, target_class: int, *, n_steps: int = 50,
@@ -919,6 +1137,131 @@ class NodeClassifier:
             .sort_values(["class_idx", "importance_signed"], ascending=[True, False])
             .reset_index(drop=True)
         )
+
+    def attribution_table(
+        self,
+        target_class: int,
+        *,
+        n_steps: int = 50,
+        internal_batch_size: int | None = None,
+        indices: Sequence[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return per-node integrated-gradients importance for many graphs as one long table.
+
+        Calls :meth:`integrated_gradients` with ``return_details=True`` for every
+        requested graph and stacks the per-node importance with the identifiers
+        needed to join it to other tables: the graph's sample id, its node ids,
+        coordinates and cluster labels, and the held-out fold and group it was
+        explained in. Each graph is explained by the networks that held it out.
+
+        The run time is ``n_graphs x n_seeds x n_steps`` forward passes.
+
+        Parameters
+        ----------
+        target_class
+            Class index whose mean node logit is attributed.
+        n_steps
+            Number of integration steps.
+        internal_batch_size
+            Number of interpolation steps evaluated per forward call; ``None``
+            evaluates all steps at once.
+        indices
+            Graph positions to explain, in the order given. ``None`` (default)
+            explains every graph in graph order.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per node, graph after graph in the requested order and nodes
+            in graph node order, with a ``RangeIndex`` and the columns
+
+            - ``graph_index`` — position of the graph in ``graphs``;
+            - ``sample_id`` — ``graph.roi_id``, or the graph index as a string;
+            - ``group_id`` — the group passed to :meth:`fit`, or ``None``;
+            - ``class_idx`` — the graph's true label;
+            - ``fold`` — the fold in which the graph was held out;
+            - ``node_id`` — ``graph.node_ids``, or the node position as a string;
+            - ``x``, ``y`` — ``graph.pos`` as float, or NaN without positions;
+            - ``cluster`` — ``graph.cluster``, or NaN without cluster labels;
+            - ``node_importance`` — summed absolute attribution of the node
+              (float32, as returned by :meth:`integrated_gradients`);
+            - ``max_abs_delta`` — the largest absolute integrated-gradients
+              convergence delta over the networks that explained the graph.
+
+            A graph without nodes contributes no rows. Nothing is stored on the
+            classifier.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        ValueError
+            If ``target_class`` is not a class index of the classifier.
+        IndexError
+            If ``indices`` holds a position outside the graphs.
+        """
+        self._check_fit()
+        if (
+            isinstance(target_class, bool)
+            or not isinstance(target_class, int | np.integer)
+            or not 0 <= target_class < self._n_classes
+        ):
+            raise ValueError(f"target_class must lie in range({self._n_classes}).")
+        n_graphs = len(self._graphs)
+        graph_indices = []
+        for value in range(n_graphs) if indices is None else indices:
+            if isinstance(value, bool) or not isinstance(value, int | np.integer) or not 0 <= value < n_graphs:
+                raise IndexError(f"Graph index {value!r} is out of range for {n_graphs} graphs.")
+            graph_indices.append(int(value))
+
+        columns = [
+            "graph_index",
+            "sample_id",
+            "group_id",
+            "class_idx",
+            "fold",
+            "node_id",
+            "x",
+            "y",
+            "cluster",
+            "node_importance",
+            "max_abs_delta",
+        ]
+        parts: dict[str, list[np.ndarray]] = {name: [] for name in columns}
+        for index in graph_indices:
+            graph = self._graphs[index]
+            if int(graph.x.shape[0]) == 0:
+                continue
+            attribution = self.integrated_gradients(
+                index,
+                int(target_class),
+                n_steps=n_steps,
+                internal_batch_size=internal_batch_size,
+                return_details=True,
+            )
+            n_nodes = len(attribution.node_ids)
+            roi_id = getattr(graph, "roi_id", None)
+            pos = getattr(graph, "pos", None)
+            cluster = getattr(graph, "cluster", None)
+            xy = np.full((n_nodes, 2), np.nan) if pos is None else pos.detach().cpu().numpy().astype(float)
+            parts["graph_index"].append(np.full(n_nodes, index, dtype=int))
+            parts["sample_id"].append(np.full(n_nodes, str(index) if roi_id is None else roi_id, dtype=object))
+            parts["group_id"].append(
+                np.full(n_nodes, None if self._groups is None else str(self._groups[index]), dtype=object)
+            )
+            parts["class_idx"].append(np.full(n_nodes, int(self._labels[index]), dtype=int))
+            parts["fold"].append(np.full(n_nodes, int(self._fold_ids[index]), dtype=int))
+            parts["node_id"].append(np.asarray(attribution.node_ids, dtype=object))
+            parts["x"].append(xy[:, 0])
+            parts["y"].append(xy[:, 1])
+            parts["cluster"].append(np.full(n_nodes, np.nan) if cluster is None else cluster.detach().cpu().numpy())
+            parts["node_importance"].append(attribution.node_importance)
+            parts["max_abs_delta"].append(
+                np.full(n_nodes, float(np.abs(attribution.convergence_delta).max()), dtype=float)
+            )
+        if not parts["graph_index"]:
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame({name: np.concatenate(values) for name, values in parts.items()}, columns=columns)
 
     # ------------------------------------------------------------------
     def _check_fit(self) -> None:

@@ -26,7 +26,7 @@ def _signal_categories(labels, categories) -> pd.Index:
     if categories is not None:
         return _categories([], categories)
     cats = _categories(labels)
-    return cats[[not (isinstance(c, (int, float, np.number)) and c < 0) for c in cats]]
+    return cats[[not (isinstance(c, int | float | np.number) and c < 0) for c in cats]]
 
 
 # --------------------------------------------------------------------- corruption
@@ -290,7 +290,7 @@ def label_anomaly_scores(
         categories = probabilities.columns
     n_classes = np.asarray(result.probabilities).shape[1]
     cats = _categories([], range(n_classes) if categories is None else categories)
-    if isinstance(prior, (pd.Series, Mapping)):
+    if isinstance(prior, pd.Series | Mapping):
         prior = pd.Series(prior).reindex(cats)
     frequencies = np.asarray(prior, dtype=float)
     if (

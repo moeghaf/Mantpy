@@ -50,6 +50,23 @@ provenance logs are unchanged when the new names and options are not used.
   the Pearson correlation between a node score and membership of that cluster.
   It is a new function and changes no existing output.
 
+Helpers for cell-ECM context models and label-reconstruction benchmarks. All
+are new functions; no existing output changes.
+
+- `mt.gr.graph_layers` returns the cell-cell, ECM-ECM and cell-ECM layers of a
+  built cell-ECM graph as sparse matrices aligned to the cells and to the patch
+  table, with matching matrices of edge lengths.
+- `mt.gr.distance_weights` turns edge lengths into edge weights (uniform,
+  inverse, inverse square, or Gaussian with a fixed or median width).
+- `mt.tl.context_features` describes each ECM patch by the cell types and ECM
+  clusters of its graph neighbours (cell, ECM or joint context; one or two hops).
+- `mt.tl.corrupt_labels` replaces a seeded fraction of labels in square blocks
+  and as isolated units, for label-reconstruction benchmarks.
+- `mt.tl.label_anomaly_scores` scores how unexpected each observed label is,
+  with an optional adjustment for the training label frequencies.
+- `mt.tl.score_label_reconstruction` reports detection and correction metrics
+  against the true labels, overall and per class.
+
 ## [1.1.1] - 2026-11-09
 
 ### Added

@@ -134,6 +134,8 @@ Geometric. `mantpy.gr.build_patch_graph` returns a dict-compatible
     to_hetero_pyg
     to_pyg
     to_networkx
+    graph_layers
+    distance_weights
 ```
 
 ## Analysis tools (`mantpy.tl`)
@@ -195,6 +197,10 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     neighbourhood_clustering
     neighbourhood_features
     reconstruct_labels
+    corrupt_labels
+    label_anomaly_scores
+    score_label_reconstruction
+    context_features
     pick_representative_samples
     score_partition
     select_n_domains

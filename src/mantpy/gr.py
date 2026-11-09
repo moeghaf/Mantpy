@@ -61,6 +61,9 @@ __all__ = [
     "extract_components_radius_reconnect",
     "extract_components_existing",
     "joint_graph_from_connectivities",
+    "GraphLayers",
+    "distance_weights",
+    "graph_layers",
     "JointGraphSummary",
     "GraphBuildResult",
     "ECMGraphBuildResult",
@@ -112,6 +115,11 @@ EDGE_FEATURE_REGISTRY: dict[str, EdgeFeatureFn] = {
     ),
 }
 
+from mantpy._graph_layers import (  # noqa: E402
+    GraphLayers,
+    distance_weights,
+    graph_layers,
+)
 from mantpy._graph_adapters import (  # noqa: E402
     extract_components_existing,
     joint_graph_from_connectivities,

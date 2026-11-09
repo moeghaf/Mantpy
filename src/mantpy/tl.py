@@ -24,6 +24,14 @@ from mantpy._analysis import (
     neighbourhood_features,
     reconstruct_labels,
 )
+from mantpy._reconstruction import (
+    LabelCorruptionResult,
+    LabelReconstructionScore,
+    context_features,
+    corrupt_labels,
+    label_anomaly_scores,
+    score_label_reconstruction,
+)
 from mantpy._constants import (
     CELL_ECM_GRAPH_KEY,
     ECM_GRAPH_KEY,
@@ -50,6 +58,12 @@ __all__ = [
     "ContactMarkerContrastResult",
     "CooccurrenceDetails",
     "LabelReconstructionResult",
+    "LabelCorruptionResult",
+    "LabelReconstructionScore",
+    "context_features",
+    "corrupt_labels",
+    "label_anomaly_scores",
+    "score_label_reconstruction",
     "CooccurrencePermResult",
     "ECMNeighbourAgreementSummary",
     "HeldOutDenoiseResult",

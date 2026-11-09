@@ -114,6 +114,7 @@ Geometric. `mantpy.gr.build_patch_graph` returns a dict-compatible
 
     ECMGraphBuildResult
     GraphBuildResult
+    GraphLayers
     JointGraphSummary
     PatchGraphResult
     build_cell_ecm_graph
@@ -158,6 +159,8 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     ContactMarkerContrastResult
     CooccurrenceDetails
     LabelReconstructionResult
+    LabelCorruptionResult
+    LabelReconstructionScore
     CooccurrencePermResult
     ECMNeighbourAgreementSummary
     GraphSmoothingResult

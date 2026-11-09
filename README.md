@@ -50,10 +50,20 @@ pip install "mantpy[spatial]"  # SpatialData integration
 pip install "mantpy[segment]"  # Cellpose segmentation
 ```
 
+## System requirements
+
+Tested on Windows 11 (Python 3.11) and Ubuntu (Python 3.11 and 3.14); no
+special hardware is needed. Dependency versions are listed in
+[`pyproject.toml`](https://github.com/moeghaf/Mantpy/blob/main/pyproject.toml).
+Installing takes about 3 minutes and the quick start below about 20 seconds on
+a desktop computer. Notebooks that run online in Google Colab are in the
+[reproducibility repository][tutorials].
+
 ## Quick start
 
 `toy_ecm_roi` synthesises a small region of interest in memory, so there is
-nothing to download:
+nothing to download. The example draws two figures: the joint cell-ECM graph
+and the neighbourhood clusters.
 
 ```python
 import mantpy as mt

@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [1.1.1] - 2026-11-09
+
+### Added
+
+- Shape options for the built-in patch encoder in `PatchEncoder` and
+  `encode_patches`: `conv_blocks` (number of convolution blocks), `conv_width`
+  (channels of the first block), `pool_size` and `pool_type` (average or max
+  pooling before the readout) and `conv_activation` (ReLU or GELU). The defaults
+  keep the previous architecture, so existing results are unchanged. The options
+  are saved with the encoder and recorded in its provenance.
+
+### Changed
+
+- With `pool_size` set, `PatchEncoder.fit` uses `deterministic="warn"` by default,
+  because adaptive pooling has no deterministic CUDA backward pass. Pass
+  `deterministic=` to override. Fits without pooling are unaffected.
+- Encoders saved with non-default shape options need Mantpy 1.1.1 or newer to load.
+
 ## [1.1.0] - 2026-10-31
 
 ### Added

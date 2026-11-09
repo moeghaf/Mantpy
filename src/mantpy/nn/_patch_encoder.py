@@ -92,8 +92,9 @@ class _ConvEnc(nn.Module):
     By default the spatial dimensions are halved until at most four pixels
     remain and the feature map is flattened. ``blocks`` fixes the number of
     convolution blocks, ``width`` sets the channels of the first block (doubled
-    per block, capped at 128) and ``pool_size`` average-pools the feature map to
-    ``pool_size x pool_size`` before the readout.
+    per block, capped at 128), ``activation`` selects ReLU or exact GELU after
+    each block, and ``pool_size`` pools the feature map to
+    ``pool_size x pool_size`` (average or max, ``pool_type``) before the readout.
     """
 
     def __init__(
@@ -105,13 +106,16 @@ class _ConvEnc(nn.Module):
         blocks: int | None = None,
         width: int = 16,
         pool_size: int | None = None,
+        activation: str = "relu",
+        pool_type: str = "avg",
     ):
         super().__init__()
         layers: list[nn.Module] = []
         ch, size, depth = in_ch, in_size, 0
         while size > 4 if blocks is None else depth < blocks:
             out = min(width * 2**depth, 128)
-            layers += [nn.Conv2d(ch, out, 3, 2, 1), nn.BatchNorm2d(out), nn.ReLU()]
+            act = nn.GELU(approximate="none") if activation == "gelu" else nn.ReLU()
+            layers += [nn.Conv2d(ch, out, 3, 2, 1), nn.BatchNorm2d(out), act]
             ch, size, depth = out, (size + 1) // 2, depth + 1
         self.conv = nn.Sequential(*layers)
         self.pool: nn.Module | None = None
@@ -121,7 +125,7 @@ class _ConvEnc(nn.Module):
                     f"pool_size={pool_size} exceeds the {size} x {size} feature map left after {depth} "
                     "convolution blocks; use fewer blocks or a smaller pool_size."
                 )
-            self.pool = nn.AdaptiveAvgPool2d(pool_size)
+            self.pool = nn.AdaptiveMaxPool2d(pool_size) if pool_type == "max" else nn.AdaptiveAvgPool2d(pool_size)
             size = pool_size
         self.lin = nn.Linear(ch * size * size, feat)
 
@@ -321,14 +325,18 @@ class PatchEncoder:
         (default) halves the patch until at most four pixels remain.
     conv_width
         Channels of the first convolution block of the built-in encoder; each
-        further block doubles them, up to 128.
+        further block doubles them. Every block is capped at 128 channels.
     pool_size
-        Average-pool the convolutional feature map to ``pool_size x pool_size``
-        before the linear readout. ``None`` (default) flattens it unpooled.
+        Pool the convolutional feature map to ``pool_size x pool_size`` before
+        the linear readout. ``None`` (default) flattens it unpooled.
+    conv_activation
+        ``"relu"`` (default) or ``"gelu"`` (exact GELU) after each convolution
+        block of the built-in encoder.
+    pool_type
+        ``"avg"`` (default) or ``"max"`` pooling; used only with ``pool_size``.
     backbone
         A custom encoder module or factory. It replaces the built-in encoder,
-        so it cannot be combined with ``conv_blocks``, ``conv_width`` or
-        ``pool_size``.
+        so it cannot be combined with the ``conv_*`` and ``pool_*`` options.
     """
 
     def __init__(
@@ -341,6 +349,8 @@ class PatchEncoder:
         conv_blocks: int | None = None,
         conv_width: int = 16,
         pool_size: int | None = None,
+        conv_activation: Literal["relu", "gelu"] = "relu",
+        pool_type: Literal["avg", "max"] = "avg",
         backbone: nn.Module | Callable | None = None,
         backbone_kwargs: Mapping[str, Any] | None = None,
         projection: nn.Module | Callable | None = None,
@@ -362,11 +372,23 @@ class PatchEncoder:
             raise ValueError(f"conv_width={conv_width!r}: expected a positive integer.")
         if pool_size is not None and pool_size < 1:
             raise ValueError(f"pool_size={pool_size!r}: expected a positive integer or None.")
-        shaped = conv_blocks is not None or conv_width != 16 or pool_size is not None
+        if conv_activation not in ("relu", "gelu"):
+            raise ValueError(f"conv_activation={conv_activation!r}: expected 'relu' or 'gelu'.")
+        if pool_type not in ("avg", "max"):
+            raise ValueError(f"pool_type={pool_type!r}: expected 'avg' or 'max'.")
+        if pool_type != "avg" and pool_size is None:
+            raise ValueError("pool_type='max' requires pool_size.")
+        shaped = (
+            conv_blocks is not None
+            or conv_width != 16
+            or pool_size is not None
+            or conv_activation != "relu"
+            or pool_type != "avg"
+        )
         if backbone is not None and shaped:
             raise ValueError(
-                "conv_blocks, conv_width and pool_size configure the built-in encoder; "
-                "they cannot be combined with a custom backbone."
+                "conv_blocks, conv_width, pool_size, conv_activation and pool_type configure the "
+                "built-in encoder; they cannot be combined with a custom backbone."
             )
         self.latent_dim = int(latent_dim)
         self.objective = objective
@@ -375,6 +397,8 @@ class PatchEncoder:
         self.conv_blocks = None if conv_blocks is None else int(conv_blocks)
         self.conv_width = int(conv_width)
         self.pool_size = None if pool_size is None else int(pool_size)
+        self.conv_activation = conv_activation
+        self.pool_type = pool_type
         self._backbone = backbone
         self._backbone_kwargs = dict(backbone_kwargs or {})
         self._projection = projection
@@ -393,7 +417,13 @@ class PatchEncoder:
     @property
     def _encoder_options(self) -> dict[str, Any]:
         """Shape options of the built-in encoder."""
-        return {"blocks": self.conv_blocks, "width": self.conv_width, "pool_size": self.pool_size}
+        return {
+            "blocks": self.conv_blocks,
+            "width": self.conv_width,
+            "pool_size": self.pool_size,
+            "activation": self.conv_activation,
+            "pool_type": self.pool_type,
+        }
 
     def __repr__(self) -> str:
         status = "fitted" if self.is_trained else "unfitted"
@@ -471,7 +501,7 @@ class PatchEncoder:
         when Lightning stops after a single known batch. The default retains
         Lightning's previous sampling behavior. Training is deterministic by
         default; with ``pool_size`` set it uses ``deterministic="warn"``,
-        because average pooling has no deterministic CUDA backward pass.
+        because adaptive pooling has no deterministic CUDA backward pass.
         """
         arrays = self._check_collection(patches, require_two=True)
         if max_epochs < 1:
@@ -540,8 +570,8 @@ class PatchEncoder:
             "logger": False,
             "enable_checkpointing": False,
             "enable_progress_bar": True,
-            # Adaptive average pooling has no deterministic CUDA backward pass,
-            # so strict determinism would raise; warn instead when pooling.
+            # Adaptive pooling has no deterministic CUDA backward pass, so
+            # strict determinism would raise; warn instead when pooling.
             "deterministic": True if self.pool_size is None or self._backbone is not None else "warn",
         }
         trainer_options.update(trainer_kwargs)
@@ -681,7 +711,13 @@ class PatchEncoder:
                 "latent_dim": self.latent_dim,
                 "input_shape": list(self._input_shape) if self._input_shape is not None else None,
                 **(
-                    {"conv_blocks": self.conv_blocks, "conv_width": self.conv_width, "pool_size": self.pool_size}
+                    {
+                        "conv_blocks": self.conv_blocks,
+                        "conv_width": self.conv_width,
+                        "pool_size": self.pool_size,
+                        "conv_activation": self.conv_activation,
+                        "pool_type": self.pool_type,
+                    }
                     if self._backbone is None
                     else {}
                 ),
@@ -724,6 +760,8 @@ class PatchEncoder:
             "conv_blocks": self.conv_blocks,
             "conv_width": self.conv_width,
             "pool_size": self.pool_size,
+            "conv_activation": self.conv_activation,
+            "pool_type": self.pool_type,
             "custom_backbone": self._backbone is not None,
             "backbone_name": _component_name(self._backbone),
             "backbone_kwargs": self._backbone_kwargs,
@@ -753,14 +791,20 @@ class PatchEncoder:
         config = json.loads((path / "config.json").read_text())
         if config.get("custom_backbone", False) and backbone is None:
             raise ValueError("This checkpoint needs its backbone module or factory supplied explicitly.")
+        # The shape options describe the built-in encoder only; a supplied backbone replaces it.
+        shape_options = {} if backbone is not None else {
+            "conv_blocks": config.get("conv_blocks"),
+            "conv_width": config.get("conv_width", 16),
+            "pool_size": config.get("pool_size"),
+            "conv_activation": config.get("conv_activation", "relu"),
+            "pool_type": config.get("pool_type", "avg"),
+        }
         instance = cls(
             latent_dim=config["latent_dim"],
             objective=config["objective"],
             temperature=config["temperature"],
             augment=config["augment"] if config["augment"] != "custom" else "default",
-            conv_blocks=config.get("conv_blocks"),
-            conv_width=config.get("conv_width", 16),
-            pool_size=config.get("pool_size"),
+            **shape_options,
             backbone=backbone,
             backbone_kwargs=backbone_kwargs if backbone_kwargs is not None else config.get("backbone_kwargs"),
         )
@@ -850,6 +894,8 @@ def encode_patches(
     conv_blocks: int | None = None,
     conv_width: int = 16,
     pool_size: int | None = None,
+    conv_activation: Literal["relu", "gelu"] = "relu",
+    pool_type: Literal["avg", "max"] = "avg",
     max_epochs: int = 200,
     batch_size: int = 1024,
     lr: float = 1e-3,
@@ -868,9 +914,9 @@ def encode_patches(
     written in place to ``obsm[key_added]`` and serialisable provenance to
     ``uns[f"{key_added}_params"]``. The fitted encoder is returned.
 
-    ``conv_blocks``, ``conv_width`` and ``pool_size`` shape the built-in
-    convolutional encoder (see :class:`PatchEncoder`); their defaults keep the
-    previous architecture.
+    ``conv_blocks``, ``conv_width``, ``pool_size``, ``conv_activation`` and
+    ``pool_type`` shape the built-in convolutional encoder (see
+    :class:`PatchEncoder`); their defaults keep the previous architecture.
     """
     adatas, _ = _as_adata_list(adata)
     arrays = _patch_arrays(adatas, patch_key)
@@ -882,6 +928,8 @@ def encode_patches(
         conv_blocks=conv_blocks,
         conv_width=conv_width,
         pool_size=pool_size,
+        conv_activation=conv_activation,
+        pool_type=pool_type,
     ).fit(
         arrays,
         max_epochs=max_epochs,

@@ -36,7 +36,8 @@ class PatchLabelScore:
         partition by the same classes.
     recovery
         For each annotated class, the fraction of its scored pixels that fall in
-        its matched cluster. Missing for a class without a match.
+        its matched cluster. Zero for a class that no cluster is matched to;
+        missing for a class without scored pixels.
     reference
         One value per patch: the annotated class covering most of its annotated
         pixels. Missing for patches without annotated pixels.
@@ -310,9 +311,8 @@ def score_patch_labels(
         classes[matched_class[order]].to_numpy(), index=cluster_index[matched_cluster[order]], name="class"
     )
     scored = contingency.sum(1).astype(np.float64)
-    recovery = np.full(n_classes, np.nan)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        recovery[matched_class] = contingency[matched_class, matched_cluster] / scored[matched_class]
+    recovery = np.where(scored > 0, 0.0, np.nan)
+    recovery[matched_class] = contingency[matched_class, matched_cluster] / scored[matched_class]
     patch_class = class_of_cluster[codes] if n_clusters else np.full(adata.n_obs, -1, dtype=np.int64)
     majority = np.where(counts.sum(1) > 0, counts.argmax(1), -1)
 

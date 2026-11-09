@@ -155,3 +155,19 @@ def test_invalid_inputs_are_rejected():
         mt.tl.score_patch_labels(adata, np.full(adata.n_obs, np.nan), annotation)
     with pytest.raises(KeyError, match="not a column"):
         mt.tl.score_patch_labels(adata, "absent", annotation)
+
+
+def test_recovery_is_zero_for_an_annotated_class_without_a_matched_cluster():
+    adata = _patches()
+    annotation = np.zeros((24, 32), dtype=np.int16)
+    annotation[:, :16] = 1
+    annotation[:, 16:] = 2
+    labels = np.zeros(adata.n_obs, dtype=int)  # one cluster for two annotated classes
+
+    score = mt.tl.score_patch_labels(adata, labels, annotation, class_names={1: "A", 2: "B"})
+
+    assert len(score.matching) == 1
+    matched = score.matching.iloc[0]
+    other = "B" if matched == "A" else "A"
+    assert score.recovery[matched] == pytest.approx(1.0)
+    assert score.recovery[other] == 0.0

@@ -50,10 +50,30 @@ pip install "mantpy[spatial]"  # SpatialData integration
 pip install "mantpy[segment]"  # Cellpose segmentation
 ```
 
+## System requirements
+
+- **Operating systems:** Windows, Linux and macOS. Tested on Windows 11 and on
+  Ubuntu (GitHub Actions `ubuntu-latest`); macOS is not part of routine testing.
+- **Python:** 3.11 to 3.14. Continuous integration runs 3.11 and 3.14.
+- **Dependencies:** installed automatically by `pip`; minimum versions are
+  declared in [`pyproject.toml`](https://github.com/moeghaf/Mantpy/blob/main/pyproject.toml). Release 1.1.0 has been tested
+  with anndata 0.12, scanpy 1.11, squidpy 1.8.2, numpy 2.2 to 2.4, pandas 2.2 to
+  2.3, scipy 1.15 to 1.17 and scikit-learn 1.7 to 1.9, and for graph learning
+  with torch-geometric 2.8 and captum 0.9.
+- **Hardware:** no non-standard hardware is required. A CUDA GPU is optional
+  and only speeds up model training (the `gnn` and `patch` extras); the paper
+  analyses used a single NVIDIA RTX 4070 SUPER.
+- **Install time:** about 3 minutes for `pip install mantpy` in a clean
+  environment on a desktop computer (Windows 11, Intel Core i7-14700F, 32 GB
+  RAM). The `gnn` and `patch` extras take longer because they install PyTorch.
+- **Demo run time:** the quick start below takes about 20 seconds on the same
+  computer, using the CPU only.
+
 ## Quick start
 
 `toy_ecm_roi` synthesises a small region of interest in memory, so there is
-nothing to download:
+nothing to download. The example runs in about 20 seconds and draws two
+figures: the joint cell-ECM graph and the neighbourhood clusters.
 
 ```python
 import mantpy as mt

@@ -8,6 +8,48 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [Unreleased]
+
+### Added
+
+Helpers for the patch-encoder, composition and classifier steps of a cohort
+analysis. Every addition is opt-in: existing defaults, outputs, stored keys and
+provenance logs are unchanged when the new names and options are not used.
+
+- `mt.pp.ecm_patch_tiles` returns the pixel block of every ECM patch as one
+  float32 array of shape `(patches, ECM channels, patch_size, patch_size)`, in
+  cohort and patch-table row order, ready for `PatchEncoder`. With
+  `subset="signal"` it returns only the patches with a non-negative label. It
+  reads the patch tables and the images and writes nothing.
+- `mt.pp.cluster_ecm_patches` accepts `embedding=`, a patch-by-feature matrix
+  (for example the output of `PatchEncoder.transform`) that is clustered in
+  place of the patch-table features, and `order_by=`, where `"size"` numbers
+  the clusters from the largest to the smallest. Both default to `None`, which
+  keeps the previous labels, results and provenance exactly. The provenance
+  keys `feature_source` and `label_mapping`, and `label_order` for K-means, are
+  recorded only when one of the two options is used.
+- `mt.tl.ecm_patch_table` stacks the patch tables of a cohort into one long
+  table with `sample_id` and `node_id` columns, optionally joined to sample
+  metadata. `node_id` is the name of the patch in the ECM graph, so the table
+  joins to component membership and to node-level classifier results. It writes
+  nothing.
+- `ClusterCompositionDetails.contrast`, on the result of
+  `mt.tl.compute_cluster_composition(..., return_details=True)`, compares the
+  mean per-unit cluster fractions of case groups against control groups and
+  returns a table accepted by `mt.tl.top_enriched_cluster`. The fields of the
+  result and the default two-item return are unchanged.
+- `NodeClassifier.composition_baseline` returns the held-out predictions of a
+  logistic regression that sees only per-graph cluster fractions (or supplied
+  features), evaluated on the folds the classifier was fitted with. It stores
+  nothing on the classifier, and the existing methods are unchanged.
+- `NodeClassifier.attribution_table` returns the integrated-gradient node
+  importance of many graphs as one long table with sample, group, fold, node,
+  coordinate and cluster columns. `integrated_gradients` and its defaults are
+  unchanged.
+- `mt.tl.cluster_membership_correlation` reports, for every sample and cluster,
+  the Pearson correlation between a node score and membership of that cluster.
+  It is a new function and changes no existing output.
+
 ## [1.1.1] - 2026-11-09
 
 ### Added

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -82,6 +82,109 @@ class ClusterCompositionDetails:
     @property
     def cluster_cols(self) -> list:
         return self.per_sample.columns.tolist()
+
+    def contrast(
+        self,
+        case: str | Sequence[str],
+        control: str | Sequence[str],
+        *,
+        pseudocount: float = 1e-3,
+        min_fraction: float = 0.0,
+    ) -> pd.DataFrame:
+        """Contrast the mean cluster fractions of case units against control units.
+
+        Units are the rows of ``per_unit`` (biological units when ``unit_col``
+        was given to :func:`mantpy.tl.compute_cluster_composition`, otherwise
+        samples). Every unit has equal weight, whatever its number of ROIs or
+        patches.
+
+        Parameters
+        ----------
+        case
+            Group label, or labels, of the case units. Labels are values of the
+            ``group_col`` passed to :func:`mantpy.tl.compute_cluster_composition`.
+        control
+            Group label, or labels, of the control units.
+        pseudocount
+            Added to both mean fractions before the ratio is taken, so a cluster
+            absent from one side has a finite ``log2_ratio``.
+        min_fraction
+            Presence threshold. A cluster is ``present`` when its fraction is at
+            least ``min_fraction`` in every case unit.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per cluster, in ``per_unit`` column order, with a
+            ``RangeIndex`` and the columns
+
+            - ``cluster``: cluster label.
+            - ``mean_case``, ``mean_control``: mean fraction over the case and
+              the control units.
+            - ``difference``: ``mean_case - mean_control``.
+            - ``log2_ratio``: ``log2((mean_case + pseudocount) / (mean_control + pseudocount))``.
+            - ``min_case_fraction``: smallest fraction among the case units.
+            - ``present``: ``min_case_fraction >= min_fraction``.
+            - ``n_case_units``, ``n_control_units``: number of units on each side.
+
+            The table fits :func:`mantpy.tl.top_enriched_cluster` with
+            ``log2_col="log2_ratio"`` and ``sig_col="present"``, which returns
+            the first cluster with the largest positive ``log2_ratio`` among
+            the present clusters and raises when there is none.
+
+        Raises
+        ------
+        KeyError
+            If a requested group is not in ``unit_meta``.
+        ValueError
+            If ``case`` and ``control`` share a group, if either side has no
+            units, if ``pseudocount`` is not finite and positive, or if
+            ``min_fraction`` lies outside ``[0, 1]``.
+
+        Examples
+        --------
+        >>> import mantpy as mt  # doctest: +SKIP
+        >>> composition = mt.tl.compute_cluster_composition(
+        ...     adatas, sample_meta=sample_meta, unit_col="mouse", return_details=True
+        ... )  # doctest: +SKIP
+        >>> table = composition.contrast(case="Infected", control="Naive", min_fraction=0.01)  # doctest: +SKIP
+        >>> mt.tl.top_enriched_cluster(table, log2_col="log2_ratio", sig_col="present")  # doctest: +SKIP
+        """
+        if not (np.isfinite(pseudocount) and pseudocount > 0):
+            raise ValueError("pseudocount must be finite and positive.")
+        if not 0 <= min_fraction <= 1:
+            raise ValueError("min_fraction must lie in [0, 1].")
+        case_groups = [case] if np.isscalar(case) else list(case)
+        control_groups = [control] if np.isscalar(control) else list(control)
+        groups = self.unit_meta.iloc[:, 0]
+        available = list(pd.unique(groups))
+        missing = [group for group in (*case_groups, *control_groups) if group not in available]
+        if missing:
+            raise KeyError(f"Groups {missing} are not in unit_meta; available: {sorted(available, key=str)}.")
+        if set(case_groups) & set(control_groups):
+            raise ValueError("case and control groups overlap.")
+        case_units = self.per_unit[groups.isin(case_groups).to_numpy()]
+        control_units = self.per_unit[groups.isin(control_groups).to_numpy()]
+        if not len(case_units):
+            raise ValueError("case has no units.")
+        if not len(control_units):
+            raise ValueError("control has no units.")
+        mean_case = case_units.mean()
+        mean_control = control_units.mean()
+        min_case = case_units.min()
+        return pd.DataFrame(
+            {
+                "cluster": self.per_unit.columns.to_numpy(),
+                "mean_case": mean_case.to_numpy(),
+                "mean_control": mean_control.to_numpy(),
+                "difference": (mean_case - mean_control).to_numpy(),
+                "log2_ratio": np.log2((mean_case + pseudocount) / (mean_control + pseudocount)).to_numpy(),
+                "min_case_fraction": min_case.to_numpy(),
+                "present": (min_case >= min_fraction).to_numpy(),
+                "n_case_units": len(case_units),
+                "n_control_units": len(control_units),
+            }
+        )
 
 
 def composition_details(

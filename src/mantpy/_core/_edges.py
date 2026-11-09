@@ -332,6 +332,11 @@ def build_cell_nx_graph(
     return G
 
 
+def _ecm_node_id(i: int) -> str:
+    """Name of the ECM graph node built from row position ``i`` of the patch table."""
+    return f"ecm_{i}"
+
+
 def build_ecm_nx_graph(
     ecm_patches_df,
     edges: EdgeList,
@@ -383,7 +388,7 @@ def build_ecm_nx_graph(
         if extra_node_attrs:
             for k, v in extra_node_attrs.items():
                 attrs[k] = v[i]
-        G.add_node(f"ecm_{i}", **attrs)
+        G.add_node(_ecm_node_id(i), **attrs)
 
     for i, j, d in edges:
         w = weight_fn(i, j, d)
@@ -391,9 +396,9 @@ def build_ecm_nx_graph(
         if edge_feat_fn is not None:
             eattrs["feat_fwd"] = edge_feat_fn(i, j, d)
             eattrs["feat_rev"] = edge_feat_fn(j, i, d)
-            eattrs["feat_source"] = f"ecm_{i}"
-            eattrs["feat_target"] = f"ecm_{j}"
-        G.add_edge(f"ecm_{i}", f"ecm_{j}", **eattrs)
+            eattrs["feat_source"] = _ecm_node_id(i)
+            eattrs["feat_target"] = _ecm_node_id(j)
+        G.add_edge(_ecm_node_id(i), _ecm_node_id(j), **eattrs)
 
     return G
 

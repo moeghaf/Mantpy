@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
@@ -66,6 +66,7 @@ __all__ = [
     "cluster_coherence",
     "cluster_cooccurrence",
     "cluster_cooccurrence_permutation_test",
+    "cluster_membership_correlation",
     "compute_cluster_composition",
     "component_summary",
     "contact_marker_contrast",
@@ -73,6 +74,7 @@ __all__ = [
     "denoise_ecm_clusters",
     "denoise_held_out_roi",
     "ecm_neighbour_label_agreement",
+    "ecm_patch_table",
     "ecm_to_anndata",
     "graph_modularity",
     "grouped_metric_summary",
@@ -390,6 +392,12 @@ def compute_cluster_composition(
     ClusterCompositionResult
         NamedTuple with ``per_sample``, ``per_group_mean``, and a
         ``cluster_cols`` property listing the shared cluster IDs.
+    ClusterCompositionDetails
+        Returned instead when ``return_details=True``. Its
+        :meth:`~ClusterCompositionDetails.contrast` method compares the mean
+        per-unit fractions of two sets of groups (case against control) and
+        returns a table accepted by :func:`top_enriched_cluster`. The
+        NamedTuple has no such method.
 
     Examples
     --------
@@ -717,6 +725,116 @@ def ecm_to_anndata(
     }
 
     return ecm_adata
+
+
+def ecm_patch_table(
+    adatas: Mapping[str, AnnData],
+    *,
+    sample_meta: pd.DataFrame | None = None,
+    cluster_col: str = "ecm_cluster",
+    patches_key: str = ECM_PATCHES_KEY,
+    feature_prefix: str = "feat_",
+    drop_background: bool = False,
+) -> pd.DataFrame:
+    """Stack the ECM patches of a cohort into one long table keyed by graph node.
+
+    Reads ``adata.uns[patches_key]`` of every sample and returns one row per
+    patch with its ``sample_id`` and ``node_id``. ``node_id`` is the name the
+    patch has as a node of the ECM graph (``"ecm_<row position>"``, as written
+    by :func:`mantpy.gr.build_ecm_graph`), so the table joins directly, on
+    ``["sample_id", "node_id"]``, to ``membership`` of :func:`component_summary`
+    and to node-level results of :class:`mantpy.nn.NodeClassifier`.
+
+    Parameters
+    ----------
+    adatas
+        Mapping of ``{sample_id: AnnData}``.
+    sample_meta
+        Optional per-sample metadata indexed by ``sample_id``. Its columns are
+        joined to every patch row, and its index sets the sample order;
+        samples absent from it are left out, as in
+        :func:`compute_cluster_composition`. ``None`` uses every sample in
+        ``adatas`` order.
+    cluster_col
+        Column of the patch table carrying cluster labels. Only read when
+        ``drop_background=True``.
+    patches_key
+        ``adata.uns`` key for the per-patch DataFrame. Defaults to
+        :data:`mantpy._constants.ECM_PATCHES_KEY` (``"ecm_patches"``).
+    feature_prefix
+        Prefix of the feature columns in the patch table. Columns starting with
+        this prefix are left out; all other columns are passed through.
+    drop_background
+        When ``True``, keeps only the patches whose ``cluster_col`` label is not
+        missing and not negative. The remaining rows keep the ``node_id`` they
+        had in the complete table. The default keeps every patch.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per patch, in sample order and then patch-table row order, with
+        a ``RangeIndex``. The columns are ``sample_id``, ``node_id``, the
+        non-feature columns of the patch table in their stored order and dtype
+        (``x``, ``y``, ``ecm_cluster``, ...), then the columns of
+        ``sample_meta``.
+
+    Raises
+    ------
+    ValueError
+        If ``adatas`` is empty, if a sample has no ``uns[patches_key]``, if
+        ``sample_meta`` has duplicate sample IDs, if a patch table already has
+        a ``sample_id`` or ``node_id`` column, or if a ``sample_meta`` column
+        has the name of a patch column.
+    KeyError
+        If ``sample_meta`` lists samples absent from ``adatas``, or if
+        ``drop_background=True`` and a sample has no ``cluster_col`` column.
+
+    Examples
+    --------
+    >>> import mantpy as mt  # doctest: +SKIP
+    >>> patches = mt.tl.ecm_patch_table(adatas, sample_meta=sample_meta, drop_background=True)  # doctest: +SKIP
+    >>> patches[["sample_id", "node_id", "x", "y", "ecm_cluster"]].head()  # doctest: +SKIP
+    """
+    from mantpy._analysis import _metadata
+    from mantpy._core._edges import _ecm_node_id
+
+    if not adatas:
+        raise ValueError("adatas is empty; expected at least one ECM sample.")
+    meta = _metadata(list(adatas), sample_meta)
+    key_columns = ["sample_id", "node_id"]
+    frames: list[pd.DataFrame] = []
+    for sample in meta.index:
+        table = adatas[sample].uns.get(patches_key)
+        if table is None:
+            raise ValueError(f"Sample {sample!r} has no uns[{patches_key!r}]; run mt.pp.extract_ecm_patches first.")
+        columns = [column for column in table.columns if not str(column).startswith(feature_prefix)]
+        reserved = [column for column in columns if column in key_columns]
+        if reserved:
+            raise ValueError(f"Sample {sample!r}: patch columns {reserved} collide with the table's key columns.")
+        frame = table.loc[:, columns].reset_index(drop=True)
+        # Row positions in the complete table name the nodes of the ECM graph
+        # (mantpy._core._edges.build_ecm_nx_graph), so they are taken before filtering.
+        frame.insert(0, "node_id", [_ecm_node_id(position) for position in range(len(table))])
+        frame.insert(0, "sample_id", sample)
+        if drop_background:
+            if cluster_col not in table.columns:
+                raise KeyError(f"Sample {sample!r} has no {cluster_col!r} column.")
+            labels = frame[cluster_col]
+            if pd.api.types.is_numeric_dtype(labels.dtype):
+                keep = (labels >= 0).fillna(False).to_numpy(dtype=bool)
+            else:
+                # Same rule as compute_cluster_composition: only negative numbers are background.
+                negative = [isinstance(label, (int, float, np.number)) and label < 0 for label in labels]
+                keep = labels.notna().to_numpy(dtype=bool) & ~np.array(negative, dtype=bool)
+            frame = frame.loc[keep]
+        frames.append(frame)
+    patches = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=key_columns)
+    colliding = [column for column in meta.columns if column in patches.columns]
+    if colliding:
+        raise ValueError(f"sample_meta columns {colliding} collide with patch columns.")
+    if len(meta.columns):
+        patches = patches.join(meta, on="sample_id")
+    return patches
 
 
 # ---------------------------------------------------------------------------
@@ -3569,6 +3687,108 @@ def select_n_domains(
     table["score"] = _z(table["modularity"].to_numpy()) + _z(table["coherence_min"].to_numpy())
     best = int(table.loc[table["score"].idxmax(), "n_domains"])
     return {"labels": labs[best], "n_domains": best, "table": table}
+
+
+def cluster_membership_correlation(
+    table: pd.DataFrame,
+    *,
+    score_col: str,
+    cluster_col: str = "cluster",
+    sample_col: str = "sample_id",
+    categories: Sequence | None = None,
+    min_cluster_nodes: int = 2,
+) -> pd.DataFrame:
+    """Correlate a node score with membership of each cluster, sample by sample.
+
+    For every sample and every cluster, the Pearson correlation is taken
+    between the score of the sample's nodes and the 0/1 indicator of
+    belonging to the cluster. A positive value means the score is higher on
+    the nodes of that cluster than on the sample's other nodes. This localises
+    a node-level score, such as the ``node_importance`` column of
+    :meth:`mantpy.nn.NodeClassifier.attribution_table`, to clusters.
+
+    Parameters
+    ----------
+    table
+        Long table with one row per node.
+    score_col
+        Numeric column holding the node score.
+    cluster_col
+        Column holding the cluster label of each node.
+    sample_col
+        Column identifying the sample of each node. Samples are reported in
+        sorted order.
+    categories
+        Optional complete, ordered cluster labels, so that clusters absent
+        from the table or from a sample still get a row. ``None`` uses the
+        labels found in ``table``; numeric labels sort in ascending order.
+        Nodes whose label is not in ``categories`` count towards ``n_nodes``
+        but get no row, so pass foreground nodes only.
+    min_cluster_nodes
+        Smallest number of nodes a cluster needs in a sample for its
+        correlation to be reported.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per sample and cluster with the columns ``sample_col``,
+        ``cluster``, ``n_nodes`` (nodes of the sample), ``n_cluster_nodes``
+        (nodes of the sample in the cluster) and ``pearson_r``.
+        ``pearson_r`` is ``NaN`` where the correlation is undefined or not
+        supported: the cluster has fewer than ``min_cluster_nodes`` nodes in
+        the sample, it holds every node of the sample, or the score is constant
+        within the sample.
+
+    Raises
+    ------
+    KeyError
+        If ``table`` lacks ``score_col``, ``cluster_col`` or ``sample_col``.
+    ValueError
+        If the score contains NaN or infinite values, or if
+        ``min_cluster_nodes`` is not a positive integer.
+
+    Examples
+    --------
+    >>> import mantpy as mt  # doctest: +SKIP
+    >>> importance = classifier.attribution_table(target_class=1)  # doctest: +SKIP
+    >>> mt.tl.cluster_membership_correlation(importance, score_col="node_importance")  # doctest: +SKIP
+    """
+    from mantpy._analysis import _categories
+
+    missing = [column for column in (score_col, cluster_col, sample_col) if column not in table]
+    if missing:
+        raise KeyError(f"table is missing columns {missing}.")
+    if (
+        isinstance(min_cluster_nodes, bool)
+        or not isinstance(min_cluster_nodes, (int, np.integer))
+        or min_cluster_nodes < 1
+    ):
+        raise ValueError("min_cluster_nodes must be a positive integer.")
+    if not np.isfinite(table[score_col].to_numpy(dtype=float)).all():
+        raise ValueError(f"{score_col} contains NaN or infinite values.")
+    cats = _categories(table[cluster_col], categories)
+    rows = []
+    for sample, nodes in table.groupby(sample_col, sort=True, observed=True):
+        score = nodes[score_col]
+        values = score.to_numpy(dtype=float)
+        n_nodes = len(nodes)
+        # The sample standard deviation (ddof=1) decides whether the score varies.
+        varies = n_nodes > 1 and values.min() != values.max() and score.std() > 0
+        for cluster in cats:
+            member = (nodes[cluster_col] == cluster).to_numpy(dtype=float)
+            n_cluster_nodes = int(member.sum())
+            defined = varies and min_cluster_nodes <= n_cluster_nodes < n_nodes
+            rows.append(
+                {
+                    sample_col: sample,
+                    "cluster": cluster,
+                    "n_nodes": n_nodes,
+                    "n_cluster_nodes": n_cluster_nodes,
+                    "pearson_r": np.corrcoef(values, member)[0, 1] if defined else np.nan,
+                }
+            )
+    result = pd.DataFrame(rows, columns=[sample_col, "cluster", "n_nodes", "n_cluster_nodes", "pearson_r"])
+    return result.astype({"n_nodes": np.int64, "n_cluster_nodes": np.int64, "pearson_r": float})
 
 
 # ---------------------------------------------------------------------------

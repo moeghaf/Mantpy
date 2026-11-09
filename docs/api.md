@@ -83,6 +83,7 @@ patches, while `mantpy.pp.normalize` provides channel-level transformations.
     compare_ecm_patches
     ecm_patches_from_images
     ecm_patch_summary
+    ecm_patch_tiles
     ecm_label_overlay_summary
     extract_ecm_patches
     extract_ecm_patches_cohort
@@ -171,6 +172,7 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     cluster_coherence
     cluster_cooccurrence
     cluster_cooccurrence_permutation_test
+    cluster_membership_correlation
     compute_cluster_composition
     component_summary
     contact_marker_contrast
@@ -178,6 +180,7 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     denoise_ecm_clusters
     denoise_held_out_roi
     ecm_neighbour_label_agreement
+    ecm_patch_table
     ecm_to_anndata
     graph_modularity
     grouped_metric_summary

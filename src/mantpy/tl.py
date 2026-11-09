@@ -24,14 +24,6 @@ from mantpy._analysis import (
     neighbourhood_features,
     reconstruct_labels,
 )
-from mantpy._reconstruction import (
-    LabelCorruptionResult,
-    LabelReconstructionScore,
-    context_features,
-    corrupt_labels,
-    label_anomaly_scores,
-    score_label_reconstruction,
-)
 from mantpy._constants import (
     CELL_ECM_GRAPH_KEY,
     ECM_GRAPH_KEY,
@@ -43,6 +35,14 @@ from mantpy._constants import (
     SPATIAL_KEY,
 )
 from mantpy._core._permutation import permutation_test as _permutation_test
+from mantpy._reconstruction import (
+    LabelCorruptionResult,
+    LabelReconstructionScore,
+    context_features,
+    corrupt_labels,
+    label_anomaly_scores,
+    score_label_reconstruction,
+)
 from mantpy._utils import log_params as _log_params
 
 _log = logging.getLogger(__name__)

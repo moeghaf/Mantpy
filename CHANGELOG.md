@@ -67,6 +67,19 @@ are new functions; no existing output changes.
 - `mt.tl.score_label_reconstruction` reports detection and correction metrics
   against the true labels, overall and per class.
 
+Helpers for scoring and controlling a single-image patch analysis. Both are new
+functions; no existing output changes.
+
+- `mt.tl.score_patch_labels` scores patch labels, or a pixel label image,
+  against a pixel annotation of the same image. Every annotated pixel inside an
+  analysed patch counts once. It returns the pixel contingency table, its
+  adjusted Rand index, a one-to-one matching of clusters to annotated classes,
+  the matched class of every patch (ready for `mt.pl.patch_map`), the recovery
+  of each class and the annotated class of every patch.
+- `mt.gr.patch_graph_control` derives a negative-control graph from a stored
+  patch graph: `"shuffled_edges"` permutes the edge destinations with a seed,
+  `"no_edges"` removes every edge. The source graph is left in place.
+
 ## [1.1.1] - 2026-11-09
 
 ### Added

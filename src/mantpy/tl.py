@@ -35,6 +35,7 @@ from mantpy._constants import (
     SPATIAL_KEY,
 )
 from mantpy._core._permutation import permutation_test as _permutation_test
+from mantpy._patch_scoring import PatchLabelScore, score_patch_labels
 from mantpy._reconstruction import (
     LabelCorruptionResult,
     LabelReconstructionScore,
@@ -69,6 +70,7 @@ __all__ = [
     "HeldOutDenoiseResult",
     "LesionSummary",
     "PristineFlagSummary",
+    "PatchLabelScore",
     "ReconstructionSummary",
     "GraphSmoothingResult",
     "SpatialTransferResult",
@@ -106,6 +108,7 @@ __all__ = [
     "pick_representative_samples",
     "summarize_pristine_flag_rate",
     "summarize_reconstruction_evaluation",
+    "score_patch_labels",
     "score_partition",
     "select_n_domains",
     "smooth_graph_signal",

@@ -70,6 +70,7 @@ __all__ = [
     "PatchGraphResult",
     "joint_graph_summary",
     "largest_component_radius_reconnect",
+    "patch_graph_control",
     "to_hetero_pyg",
     "to_networkx",
     "to_pyg",
@@ -469,6 +470,105 @@ def build_patch_graph(
             "params": params.copy(),
         }
     return result
+
+
+def patch_graph_control(
+    adata: AnnData,
+    control: Literal["shuffled_edges", "no_edges"],
+    *,
+    graph_key: str = "patch",
+    key_added: str | None = None,
+    random_state: int | np.random.Generator | None = 0,
+) -> PatchGraphResult:
+    """Derive a negative-control graph from a stored patch graph.
+
+    A graph model that uses tissue structure should lose performance when the
+    graph no longer carries it. This builds the two standard controls from a
+    graph stored by :func:`build_patch_graph`, leaving the original in place:
+
+    - ``"shuffled_edges"`` keeps every edge's source node and edge features and
+      draws its destination node from a random permutation of all destinations.
+      Each node keeps its out-degree and the edge-feature distribution is
+      unchanged, but the edges no longer follow the tissue.
+    - ``"no_edges"`` removes every edge, so each node is encoded on its own.
+
+    Parameters
+    ----------
+    adata
+        Patch table holding a graph from :func:`build_patch_graph`.
+    control
+        ``"shuffled_edges"`` or ``"no_edges"``.
+    graph_key
+        Key of the source graph in ``adata.uns``.
+    key_added
+        Key for the control graph. Defaults to ``f"{graph_key}_{control}"``. The
+        adjacency is stored in ``obsp[f"{key_added}_connectivities"]`` and the
+        edge arrays in ``uns[key_added]``.
+    random_state
+        Seed or generator for the destination permutation of
+        ``"shuffled_edges"``.
+
+    Returns
+    -------
+    PatchGraphResult
+        The control graph. Pass its ``graph_key`` to
+        :func:`mantpy.nn.encode_graphmae`. A shuffled graph is directed, so its
+        stored adjacency is not symmetric and ``n_edges`` is half the number of
+        directed edges.
+
+    Examples
+    --------
+    >>> mt.gr.build_patch_graph(patches, k=40)  # doctest: +SKIP
+    >>> control = mt.gr.patch_graph_control(patches, "shuffled_edges", random_state=0)  # doctest: +SKIP
+    >>> mt.nn.encode_graphmae(patches, graph_key=control.graph_key, node_feature_key="X_cnn")  # doctest: +SKIP
+
+    """
+    if control not in {"shuffled_edges", "no_edges"}:
+        raise ValueError(f"control must be 'shuffled_edges' or 'no_edges'; got {control!r}.")
+    source = adata.uns.get(graph_key)
+    if not isinstance(source, Mapping) or "edge_index" not in source:
+        raise KeyError(f"adata.uns[{graph_key!r}] holds no patch graph; run mt.gr.build_patch_graph first.")
+    edge_index = np.asarray(source["edge_index"], dtype=np.int64)
+    edge_attr = np.asarray(
+        source.get("edge_attr", np.empty((edge_index.shape[1], 0), dtype=np.float32)), dtype=np.float32
+    )
+    names = [str(name) for name in source.get("edge_feature_names", ())]
+    params = {**dict(source.get("params", {})), "control": control, "source_graph": graph_key}
+    if control == "shuffled_edges":
+        permutation = np.random.default_rng(random_state).permutation(edge_index.shape[1])
+        edge_index = np.stack([edge_index[0], edge_index[1, permutation]])
+        edge_attr = edge_attr.copy()
+        if isinstance(random_state, int | np.integer):
+            params["random_state"] = int(random_state)
+    else:
+        edge_index, edge_attr = edge_index[:, :0].copy(), edge_attr[:0].copy()
+
+    key = key_added if key_added is not None else f"{graph_key}_{control}"
+    connectivities_key = f"{key}_connectivities"
+    connectivities = sp.csr_matrix(
+        (np.ones(edge_index.shape[1], dtype=np.float32), (edge_index[0], edge_index[1])),
+        shape=(adata.n_obs, adata.n_obs),
+    )
+    connectivities.sum_duplicates()
+    connectivities.data[:] = 1.0
+    adata.obsp[connectivities_key] = connectivities
+    adata.uns[key] = {
+        "connectivities_key": connectivities_key,
+        "edge_index": edge_index,
+        "edge_attr": edge_attr,
+        "edge_feature_names": np.asarray(names, dtype=str),
+        "params": params.copy(),
+    }
+    return PatchGraphResult(
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        n_edges=edge_index.shape[1] // 2,
+        edge_feature_names=names,
+        n_nodes=adata.n_obs,
+        graph_key=key,
+        connectivities_key=connectivities_key,
+        params=params,
+    )
 
 
 def _require_dmax_knn_only(edge_method: str, dmax: float | None, name: str) -> None:

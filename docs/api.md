@@ -132,6 +132,7 @@ Geometric. `mantpy.gr.build_patch_graph` returns a dict-compatible
     joint_graph_from_connectivities
     joint_graph_summary
     largest_component_radius_reconnect
+    patch_graph_control
     to_hetero_pyg
     to_pyg
     to_networkx
@@ -167,6 +168,7 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     HeldOutDenoiseResult
     LesionSummary
     PristineFlagSummary
+    PatchLabelScore
     ReconstructionSummary
     SpatialTransferResult
     ablation_roc_curves
@@ -206,6 +208,7 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     context_features
     pick_representative_samples
     score_partition
+    score_patch_labels
     select_n_domains
     smooth_graph_signal
     summarize_largest_lesion

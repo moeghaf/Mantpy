@@ -83,6 +83,20 @@ to `None`, which keeps the previous labels and provenance. When either is used,
 `uns["ecm_clustering"]` also records `feature_source`, `label_order` and
 `label_mapping` (model label to written label).
 
+```python
+mt.pp.renumber_ecm_clusters(cohort, {0: 0, 1: 1, 2: 2, 3: 4, 4: 3, 5: 5})
+```
+
+`renumber_ecm_clusters` gives the clusters new numbers from a
+`{current: new}` mapping (a dictionary or a `pandas.Series`). Two clusters of
+similar size can swap numbers between two runs, so this is the step that keeps
+the numbers of an earlier run or of a published analysis. Every patch stays in
+its cluster. The mapping needs an entry for every cluster of the cohort and
+may not give two clusters the same number; background patches keep `-1`. The
+patch tables and `uns["ecm_clustering"]` are updated in place, and the
+function returns the number of patches under each new number. Renumber before
+the graphs are built, because the graph nodes carry the cluster labels.
+
 ## Adopt existing graph connections
 
 ```python

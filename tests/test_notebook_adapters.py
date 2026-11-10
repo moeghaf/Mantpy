@@ -120,6 +120,26 @@ def test_patch_map_preserves_full_lattice_id_colors_and_overlay_extent():
     plt.close(ax.figure)
 
 
+def test_patch_map_legend_lists_drawn_categories_in_palette_order():
+    data = _observations(["p1", "p2"], [[15, 15], [25, 15]], grid_y=[1, 1], grid_x=[1, 2], ecm_cluster=[0, 1])
+    data.uns["image_ecm_patches"] = {"patch_grid_shape": np.array([4, 5]), "patch_size": 10}
+    labels = pd.Series(["villus", "crypt"], index=["p1", "p2"])
+    palette = {"crypt": "red", "muscle": "green", "villus": "blue"}
+    ax = mt.pl.patch_map(data, labels, palette=palette)
+    assert ax.get_legend() is None
+    plt.close(ax.figure)
+    ax = mt.pl.patch_map(data, labels, palette=palette, legend=True)
+    assert [text.get_text() for text in ax.get_legend().get_texts()] == ["crypt", "villus"]
+    plt.close(ax.figure)
+    ax = mt.pl.patch_map(data, labels, legend={"ncol": 1, "title": "Layer"})
+    assert [text.get_text() for text in ax.get_legend().get_texts()] == ["villus", "crypt"]
+    assert ax.get_legend().get_title().get_text() == "Layer"
+    plt.close(ax.figure)
+    with pytest.raises(ValueError, match="categorical"):
+        mt.pl.patch_map(data, pd.Series([0.1, 0.2], index=["p1", "p2"]), legend=True)
+    plt.close("all")
+
+
 def test_tiles_only_skip_descriptor_backend(monkeypatch):
     import mantpy.pp as pp
 

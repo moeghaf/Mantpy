@@ -14,6 +14,7 @@ from anndata import AnnData
 
 from mantpy._analysis import (
     CellECMEnrichmentResult,
+    CellECMMarkerContrastResult,
     ClusterCompositionDetails,
     ComponentSummaryResult,
     ContactMarkerContrastResult,
@@ -35,13 +36,17 @@ from mantpy._constants import (
     SPATIAL_KEY,
 )
 from mantpy._core._permutation import permutation_test as _permutation_test
+from mantpy._graph_layers import graph_layers as _graph_layers
 from mantpy._patch_scoring import PatchLabelScore, score_patch_labels
 from mantpy._reconstruction import (
+    IterativeLabelReconstructionResult,
     LabelCorruptionResult,
     LabelReconstructionScore,
     context_features,
     corrupt_labels,
+    fit_temperature,
     label_anomaly_scores,
+    reconstruct_labels_iteratively,
     score_label_reconstruction,
 )
 from mantpy._utils import log_params as _log_params
@@ -53,6 +58,7 @@ __all__ = [
     "CentralVoidResult",
     "CellECMContactResult",
     "CellECMEnrichmentResult",
+    "CellECMMarkerContrastResult",
     "ClusterCompositionResult",
     "ClusterCompositionDetails",
     "ComponentSummaryResult",
@@ -61,10 +67,13 @@ __all__ = [
     "LabelReconstructionResult",
     "LabelCorruptionResult",
     "LabelReconstructionScore",
+    "IterativeLabelReconstructionResult",
     "context_features",
     "corrupt_labels",
     "label_anomaly_scores",
     "score_label_reconstruction",
+    "fit_temperature",
+    "reconstruct_labels_iteratively",
     "CooccurrencePermResult",
     "ECMNeighbourAgreementSummary",
     "HeldOutDenoiseResult",
@@ -77,6 +86,7 @@ __all__ = [
     "ablation_roc_curves",
     "cell_ecm_enrichment",
     "cell_ecm_enrichment_matrix",
+    "cell_ecm_marker_contrast",
     "cell_ecm_contact",
     "cell_ecm_topology_sensitivity",
     "cluster_coherence",
@@ -1244,6 +1254,7 @@ def cluster_cooccurrence(
     unit_aggregation: Literal["pool_counts", "mean_roi_enrichment"] = "pool_counts",
     return_details: bool = False,
     missing: Literal["zero", "nan"] = "zero",
+    group_col: str | None = None,
 ) -> np.ndarray | CooccurrenceDetails:
     """Aggregate ``log2(observed / expected)`` cluster-cluster co-occurrence.
 
@@ -1272,6 +1283,8 @@ def cluster_cooccurrence(
 
     Subtract two of these matrices to get a Δ-enrichment heatmap (e.g.
     Infected_KO − Infected_WT to see which cluster pairs are KO-enriched).
+    With ``group_col`` and ``return_details=True`` the returned object does
+    this for groups of units: ``details.contrast(case=..., control=...)``.
 
     .. versionchanged:: unreleased
         Same-cluster edges are now counted in both orientations, consistent
@@ -1324,17 +1337,27 @@ def cluster_cooccurrence(
     missing
         ``"zero"`` retains the legacy undefined-cell behavior;
         ``"nan"`` exposes absent categories or graphs with no edges.
+    group_col
+        Optional column of ``sample_meta`` with the experimental group of
+        each sample. Every unit must lie in exactly one group. The groups
+        are stored as ``details.unit_meta`` and enable
+        :meth:`CooccurrenceDetails.contrast`; they do not change the
+        enrichment values.
 
     Returns
     -------
     np.ndarray
         Symmetric ``n_clusters × n_clusters`` log₂-enrichment matrix.
         Non-finite entries (zero expected count) are zeroed.
+    CooccurrenceDetails
+        With ``return_details=True``.
 
     Raises
     ------
     ValueError
-        If a graph is directed.
+        If a graph is directed, or if a unit lies in more than one group.
+    KeyError
+        If ``group_col`` is not a column of ``sample_meta``.
     """
     from mantpy._analysis import _categories, cooccurrence_details
 
@@ -1359,7 +1382,7 @@ def cluster_cooccurrence(
         cluster_attr=cluster_attr, sample_meta=sample_meta,
         unit_col=unit_col, unit_aggregation=unit_aggregation,
         missing=missing, eps=eps, count_fn=count_fn,
-        score_fn=_cooccurrence_log2_enrichment,
+        score_fn=_cooccurrence_log2_enrichment, group_col=group_col,
     )
     return result if return_details else result.enrichment
 
@@ -1917,6 +1940,118 @@ def cell_ecm_enrichment(
                 },
             )
     return CellECMEnrichmentResult(df, per_roi_df) if return_details else df
+
+
+def cell_ecm_marker_contrast(
+    adata_or_adatas: AnnData | Mapping[str, AnnData] | Sequence[AnnData],
+    cell_type: str,
+    *,
+    cluster: Any = None,
+    ecm_names: Sequence[str] | None = None,
+    weighting: str = "unique_patch",
+    accumulation_dtype: str = "float64",
+    graph_key: str = CELL_ECM_GRAPH_KEY,
+    cell_attr: str = "cell_type",
+    ecm_attr: str = "ecm_cluster",
+    patches_key: str = ECM_PATCHES_KEY,
+) -> CellECMMarkerContrastResult:
+    """Compare ECM marker levels in patches with and without a contact to a cell type.
+
+    In every sample, the mean marker profile of the patches without an edge to
+    a ``cell_type`` cell is subtracted from that of the patches with one
+    (:func:`contact_marker_contrast` on the stored cell-ECM graph). With
+    ``cluster``, only the patches of that ECM cluster are compared. The
+    samples are then averaged with equal weight. A sample in which one of the
+    two groups has no patch has no contrast (NaN) and is left out of the mean.
+
+    Parameters
+    ----------
+    adata_or_adatas
+        One AnnData, a mapping from sample name to AnnData, or a sequence.
+        Each needs the cell-ECM graph (``mt.gr.build_cell_ecm_graphs``) and
+        the patch table in ``adata.uns[patches_key]``.
+    cell_type
+        Value of ``adata.obs[cell_attr]`` whose contacts are counted.
+    cluster
+        ECM cluster (value of ``ecm_attr`` in the patch table) to restrict
+        the comparison to. ``None`` compares all patches.
+    ecm_names
+        Marker names of the ``feat_*`` columns of the patch table, in column
+        order. When given, the first ``len(ecm_names)`` feature columns are
+        used and named so; otherwise all ``feat_*`` columns are used.
+    weighting, accumulation_dtype
+        Passed to :func:`contact_marker_contrast`.
+    graph_key, cell_attr, ecm_attr, patches_key
+        Where the graph, the cell types, the ECM clusters and the patch table
+        are stored.
+
+    Returns
+    -------
+    CellECMMarkerContrastResult
+        ``per_sample`` (samples by markers), ``mean`` (mean over the samples,
+        each counted once), ``counts`` (compared patches with and without a
+        contact in every sample) and ``contacted`` (for each sample, a Boolean
+        Series over the patch table marking the compared patches with a
+        contact).
+    """
+    if isinstance(adata_or_adatas, AnnData):
+        adatas = {"sample": adata_or_adatas}
+    elif isinstance(adata_or_adatas, Mapping):
+        adatas = dict(adata_or_adatas)
+    else:
+        adatas = {f"sample_{i}": adata for i, adata in enumerate(adata_or_adatas)}
+    if not adatas:
+        raise ValueError("No sample was given.")
+    names = None if ecm_names is None else [str(name) for name in ecm_names]
+    rows: dict[str, np.ndarray] = {}
+    counts: dict[str, dict[str, int]] = {}
+    contacted: dict[str, pd.Series] = {}
+    columns: list | None = None
+    for sample, adata in adatas.items():
+        if patches_key not in adata.uns:
+            raise ValueError(
+                f"adata.uns[{patches_key!r}] is missing in sample {sample!r}. Run mt.pp.attach_ecm_patches first."
+            )
+        if cell_attr not in adata.obs:
+            raise ValueError(f"adata.obs[{cell_attr!r}] is missing in sample {sample!r}.")
+        patches = adata.uns[patches_key]
+        features = [column for column in patches.columns if str(column).startswith("feat_")]
+        if names is not None:
+            if len(features) < len(names):
+                raise ValueError(
+                    f"ecm_names has {len(names)} names but the patch table of sample {sample!r} "
+                    f"has {len(features)} feat_* columns."
+                )
+            features = features[: len(names)]
+        if not features:
+            raise ValueError(f"The patch table of sample {sample!r} has no feat_* column.")
+        if columns is None:
+            columns = features
+        elif features != columns:
+            raise ValueError("The samples do not share the same feat_* columns.")
+        labels = None
+        if cluster is not None:
+            if ecm_attr not in patches.columns:
+                raise ValueError(f"The patch table of sample {sample!r} has no {ecm_attr!r} column.")
+            labels = patches[ecm_attr].to_numpy()
+        result = contact_marker_contrast(
+            _graph_layers(adata, graph_key=graph_key).cell_ecm, patches[features],
+            cell_labels=adata.obs[cell_attr].astype(str).to_numpy(), cell_type=str(cell_type),
+            patch_labels=labels, cluster=cluster,
+            weighting=weighting, accumulation_dtype=accumulation_dtype,
+        )
+        rows[sample] = result.contrast.to_numpy()
+        counts[sample] = {"n_contacted": result.n_contacted, "n_uncontacted": result.n_uncontacted}
+        mask = result.contact_mask.to_numpy()
+        if labels is not None:
+            mask = mask & (labels == cluster)
+        contacted[sample] = pd.Series(mask, index=patches.index, name="contacted")
+    per_sample = pd.DataFrame.from_dict(rows, orient="index", columns=names or columns)
+    per_sample.index.name = "sample"
+    per_sample.columns.name = "marker"
+    count_table = pd.DataFrame.from_dict(counts, orient="index")
+    count_table.index.name = "sample"
+    return CellECMMarkerContrastResult(per_sample, per_sample.mean().rename("contrast"), count_table, contacted)
 
 
 def cell_ecm_topology_sensitivity(

@@ -55,6 +55,7 @@ __all__ = [
     "graph_triptych",
     "image_panel",
     "interaction_heatmap",
+    "marker_contrast_bars",
     "neighbourhood_clusters",
     "niche_bubble",
     "niche_bubble_table",
@@ -1945,6 +1946,7 @@ def ecm_centroid_heatmap(
     *,
     ecm_names: list[str] | None = None,
     K_ecm: int | None = None,
+    values: str = "z_score",
     cmap: str = "RdBu_r",
     signed_text: bool = True,
     text_fontsize: int = 8,
@@ -1953,6 +1955,7 @@ def ecm_centroid_heatmap(
     cluster_label_template: str = "ECM {k}",
     rotation: int = 45,
     show_colorbar: bool = True,
+    colorbar_label: str = "z",
     title: str | None = None,
     figsize: tuple[float, float] | None = None,
     ax: Axes | None = None,
@@ -1966,6 +1969,7 @@ def ecm_centroid_heatmap(
     ``n_markers`` ``feat_*`` columns, matching the order in ``ecm_names``),
     z-scores down columns (i.e. per marker, across clusters), and renders
     the resulting matrix with optional signed-decimal text annotations.
+    With ``values="mean_intensity"`` the cluster means themselves are shown.
 
     Cells are square (``aspect="equal"``).  The heatmap is anchored to the
     centre of its axes so the natural wide-short proportion does not
@@ -1984,6 +1988,14 @@ def ecm_centroid_heatmap(
     K_ecm
         Number of signal clusters (0..K_ecm-1).  Inferred from the data
         when ``None``.
+    values
+        Quantity shown in each cell, a column of :func:`ecm_centroid_table`.
+        ``"z_score"`` (default) standardises the cluster means of each
+        marker across the clusters, which shows where a marker is highest
+        whatever its scale. ``"mean_intensity"`` shows the cluster means
+        themselves. Use it when the patch features are already on a common
+        scale, for example pooled z-scores, or when there are few clusters.
+        The colour scale is symmetric about zero in both cases.
     cmap, signed_text, text_fontsize, label_fontsize
         Visual options.
     cluster_colors
@@ -1996,6 +2008,8 @@ def ecm_centroid_heatmap(
         Rotation of x-tick (marker) labels.
     show_colorbar
         Append a thin colorbar to the right of the heatmap.
+    colorbar_label
+        Label of the colorbar.
     ax, save, show
         Standard mantpy plotting controls.
 
@@ -2005,6 +2019,8 @@ def ecm_centroid_heatmap(
     """
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+    if values not in ("z_score", "mean_intensity"):
+        raise ValueError(f"values must be 'z_score' or 'mean_intensity', got {values!r}.")
     table = ecm_centroid_table(
         adata_or_adatas,
         ecm_names=ecm_names,
@@ -2014,7 +2030,7 @@ def ecm_centroid_heatmap(
     cluster_levels = list(dict.fromkeys(table["cluster"].astype(int).tolist()))
     n_markers = len(markers)
     z = (
-        table.pivot(index="cluster", columns="marker", values="z_score")
+        table.pivot(index="cluster", columns="marker", values=values)
         .reindex(index=cluster_levels, columns=markers)
         .to_numpy(dtype=float)
     )
@@ -2062,15 +2078,15 @@ def ecm_centroid_heatmap(
                 )
 
     ax.set_xticks(np.arange(n_markers + 1) - 0.5, minor=True)
-    ax.set_yticks(np.arange(K_ecm + 1) - 0.5, minor=True)
+    ax.set_yticks(np.arange(len(cluster_levels) + 1) - 0.5, minor=True)
     ax.grid(which="minor", color="black", linewidth=0.5)
     ax.tick_params(which="minor", length=0)
 
     if show_colorbar:
         cax = make_axes_locatable(ax).append_axes("right", size="3%", pad=0.05)
-        _cbar = plt.colorbar(im, cax=cax, label="z")
+        _cbar = plt.colorbar(im, cax=cax)
         _cbar.ax.tick_params(labelsize=label_fontsize)
-        _cbar.set_label("z", fontsize=label_fontsize)
+        _cbar.set_label(colorbar_label, fontsize=label_fontsize)
     if title is not None:
         ax.set_title(title, loc="left", fontsize=12, fontweight="bold")
     _save_and_show(fig, save, show)
@@ -2482,6 +2498,7 @@ from mantpy._patch_map import patch_map  # noqa: E402
 from mantpy._plot_helpers import (  # noqa: E402  imported after core plotters
     cell_ecm_enrichment_bars,
     channel_overlay_on_neighbours,
+    marker_contrast_bars,
     niche_bubble,
     niche_bubble_table,
     patch_domain_map,

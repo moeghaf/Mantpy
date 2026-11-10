@@ -23,6 +23,16 @@ def _categories(values, categories=None) -> pd.Index:
     return index
 
 
+def _finite_mean(scores: np.ndarray) -> np.ndarray:
+    """Mean over the first axis of the finite values; NaN where none is finite."""
+    finite = np.isfinite(scores)
+    count = finite.sum(axis=0)
+    return np.divide(
+        np.where(finite, scores, 0).sum(axis=0), count,
+        out=np.full(scores.shape[1:], np.nan), where=count > 0,
+    )
+
+
 def _ids(values, size: int, name: str) -> pd.Index:
     index = pd.RangeIndex(size) if values is None else pd.Index(values)
     if len(index) != size or not index.is_unique or index.hasnans:
@@ -266,11 +276,80 @@ class CooccurrenceDetails:
     per_sample: dict[str, Any]
     per_unit: dict[str, Any]
     unit_aggregation: str
+    unit_meta: pd.DataFrame | None = None
+
+    def contrast(self, case, control) -> pd.DataFrame:
+        """Difference in mean co-occurrence enrichment between groups of units.
+
+        Each unit (for example a mouse) counts once. The enrichment matrices
+        of the case units are averaged, the control units likewise, and the
+        control mean is subtracted from the case mean. A cluster pair that
+        is undefined (NaN) in some units is averaged over the units where it
+        is defined, as in the overall ``enrichment``.
+
+        Parameters
+        ----------
+        case, control
+            One group label or a sequence of group labels from the
+            ``group_col`` given to :func:`mantpy.tl.cluster_cooccurrence`.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Square table of ``mean(case) - mean(control)``; rows and columns
+            are the cluster categories. A cell is NaN when either side has
+            no unit with a defined value for that pair.
+
+        Raises
+        ------
+        ValueError
+            If the details were computed without ``group_col``, if ``case``
+            and ``control`` share a group, or if either side has no units.
+        KeyError
+            If a requested group is not among the units' groups.
+
+        Examples
+        --------
+        >>> import mantpy as mt  # doctest: +SKIP
+        >>> cooccurrence = mt.tl.cluster_cooccurrence(
+        ...     adatas, n_clusters=6, sample_meta=sample_meta, unit_col="mouse",
+        ...     group_col="group", missing="nan", return_details=True,
+        ... )  # doctest: +SKIP
+        >>> delta = cooccurrence.contrast(case="Infected KO", control="Infected WT")  # doctest: +SKIP
+        """
+        if self.unit_meta is None:
+            raise ValueError(
+                "contrast needs the group of each unit: pass group_col to cluster_cooccurrence."
+            )
+        case_groups = [case] if np.isscalar(case) else list(case)
+        control_groups = [control] if np.isscalar(control) else list(control)
+        groups = self.unit_meta.iloc[:, 0]
+        available = list(pd.unique(groups))
+        missing = [group for group in (*case_groups, *control_groups) if group not in available]
+        if missing:
+            raise KeyError(f"Groups {missing} are not in unit_meta; available: {sorted(available, key=str)}.")
+        if set(case_groups) & set(control_groups):
+            raise ValueError("case and control groups overlap.")
+        case_units = groups.index[groups.isin(case_groups)]
+        control_units = groups.index[groups.isin(control_groups)]
+        if not len(case_units):
+            raise ValueError("case has no units.")
+        if not len(control_units):
+            raise ValueError("control has no units.")
+        mean_case = _finite_mean(np.stack([self.per_unit[unit].enrichment for unit in case_units]))
+        mean_control = _finite_mean(np.stack([self.per_unit[unit].enrichment for unit in control_units]))
+        labels = list(self.categories)
+        return pd.DataFrame(
+            mean_case - mean_control,
+            index=pd.Index(labels, name="cluster_a", tupleize_cols=False),
+            columns=pd.Index(labels, name="cluster_b", tupleize_cols=False),
+        )
 
 
 def cooccurrence_details(
     adatas, *, categories, graph_key, cluster_attr, sample_meta,
     unit_col, unit_aggregation, missing, eps, count_fn, score_fn,
+    group_col=None,
 ) -> CooccurrenceDetails:
     if missing not in {"zero", "nan"}:
         raise ValueError("missing must be 'zero' or 'nan'.")
@@ -282,15 +361,29 @@ def cooccurrence_details(
     meta = _metadata(list(cohort), sample_meta, unit_col)
     cats = tuple(categories)
     shape = (len(cats), len(cats))
+    units = pd.Series(meta.index, index=meta.index) if unit_col is None else meta[unit_col]
+    unit_meta = None
+    if group_col is not None:
+        if group_col not in meta:
+            raise KeyError(f"sample_meta[{group_col!r}] is missing.")
+        unit_order = list(pd.unique(units))
+        unit_meta = pd.DataFrame(
+            index=pd.Index(unit_order, name=unit_col or meta.index.name), columns=[group_col],
+        )
+        for unit in unit_order:
+            groups = pd.unique(meta.loc[units == unit, group_col])
+            if len(groups) != 1:
+                raise ValueError(f"Unit {unit!r} belongs to more than one group.")
+            unit_meta.loc[unit, group_col] = groups[0]
 
-    def result(observed, nodes, per_sample=None, per_unit=None, enrichment=None):
+    def result(observed, nodes, per_sample=None, per_unit=None, enrichment=None, unit_meta=None):
         p = nodes / max(nodes.sum(), 1.0)
         expected = observed.sum() * np.outer(p, p)
         score = score_fn(observed, nodes, eps=eps, missing=missing)
         return CooccurrenceDetails(
             score if enrichment is None else enrichment,
             observed, expected, nodes, cats,
-            per_sample or {}, per_unit or {}, unit_aggregation,
+            per_sample or {}, per_unit or {}, unit_aggregation, unit_meta,
         )
 
     per_sample = {}
@@ -322,7 +415,6 @@ def cooccurrence_details(
                 cluster_attr=cluster_attr, categories=cats,
             )
         per_sample[sample] = result(observed, nodes)
-    units = pd.Series(meta.index, index=meta.index) if unit_col is None else meta[unit_col]
     per_unit = {}
     for unit in pd.unique(units):
         samples = meta.index[units == unit]
@@ -330,24 +422,14 @@ def cooccurrence_details(
         nodes = sum((per_sample[s].node_counts for s in samples), np.zeros(len(cats)))
         mean = None
         if unit_aggregation == "mean_roi_enrichment":
-            scores = np.stack([per_sample[s].enrichment for s in samples])
-            finite = np.isfinite(scores)
-            mean = np.divide(
-                np.where(finite, scores, 0).sum(axis=0), finite.sum(axis=0),
-                out=np.full(shape, np.nan), where=finite.sum(axis=0) > 0,
-            )
+            mean = _finite_mean(np.stack([per_sample[s].enrichment for s in samples]))
         per_unit[unit] = result(observed, nodes, enrichment=mean)
     observed = sum((r.observed for r in per_sample.values()), np.zeros(shape))
     nodes = sum((r.node_counts for r in per_sample.values()), np.zeros(len(cats)))
     mean = None
     if (unit_col is not None or unit_aggregation == "mean_roi_enrichment") and per_unit:
-        scores = np.stack([r.enrichment for r in per_unit.values()])
-        finite = np.isfinite(scores)
-        mean = np.divide(
-            np.where(finite, scores, 0).sum(axis=0), finite.sum(axis=0),
-            out=np.full(shape, np.nan), where=finite.sum(axis=0) > 0,
-        )
-    return result(observed, nodes, per_sample, per_unit, mean)
+        mean = _finite_mean(np.stack([r.enrichment for r in per_unit.values()]))
+    return result(observed, nodes, per_sample, per_unit, mean, unit_meta)
 
 
 def neighbourhood_features(
@@ -451,6 +533,23 @@ class ContactMarkerContrastResult:
     weights: pd.Series
     n_contacted: int
     n_uncontacted: int
+
+
+@dataclass(frozen=True)
+class CellECMMarkerContrastResult:
+    """Output of ``mt.tl.cell_ecm_marker_contrast``.
+
+    ``per_sample`` is a table of samples by markers and ``mean`` its mean
+    over the samples, each sample counted once. ``counts`` gives the number
+    of compared patches with and without a contact in every sample.
+    ``contacted`` maps each sample to a Boolean Series over its patch table
+    that marks the compared patches with a contact.
+    """
+
+    per_sample: pd.DataFrame
+    mean: pd.Series
+    counts: pd.DataFrame
+    contacted: dict[str, pd.Series]
 
 
 @dataclass(frozen=True)

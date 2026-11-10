@@ -113,3 +113,35 @@ class TestPanelMeanComposition:
         leg = ax.get_legend()
         assert leg is not None
         assert leg.get_title().get_text() == "ECM cluster"
+
+    def test_rows_follow_group_order_by_label(self):
+        # Rows given in another order are matched to group_order by label.
+        gm = pd.DataFrame([[0.9, 0.1], [0.2, 0.8]], index=["g2", "g1"], columns=[0, 1])
+        fig, ax = plt.subplots()
+        mt.pl.plot_mean_composition(
+            ax,
+            gm,
+            [0, 1],
+            palette={0: "#000000", 1: "#ffffff"},
+            group_order=["g1", "g2"],
+            target_cluster=0,
+        )
+        heights = [patch.get_height() for patch in ax.patches]
+        assert heights == pytest.approx([0.2, 0.9, 0.8, 0.1])
+
+    def test_title_and_group_labels(self):
+        group_order = ["g1", "g2"]
+        gm = pd.DataFrame([[0.3, 0.7], [0.4, 0.6]], index=group_order, columns=[0, 1])
+        options = {"palette": {0: "#000000", 1: "#ffffff"}, "group_order": group_order, "target_cluster": 0}
+        fig, axes = plt.subplots(1, 3)
+        mt.pl.plot_mean_composition(axes[0], gm, [0, 1], **options)
+        assert axes[0].get_title() == "Mean ECM composition per group"
+        assert len(axes[0].get_xticks()) == 0
+        mt.pl.plot_mean_composition(axes[1], gm, [0, 1], title=None, group_labels=True, **options)
+        assert axes[1].get_title() == ""
+        assert [label.get_text() for label in axes[1].get_xticklabels()] == group_order
+        mt.pl.plot_mean_composition(axes[2], gm, [0, 1], title="Liver", group_labels=["A", "B"], **options)
+        assert axes[2].get_title() == "Liver"
+        assert [label.get_text() for label in axes[2].get_xticklabels()] == ["A", "B"]
+        with pytest.raises(ValueError, match="one label for each group"):
+            mt.pl.plot_mean_composition(axes[2], gm, [0, 1], group_labels=["A"], **options)

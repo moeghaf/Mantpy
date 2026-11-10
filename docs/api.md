@@ -92,6 +92,7 @@ patches, while `mantpy.pp.normalize` provides channel-level transformations.
     normalize
     preprocess_ecm
     remove_background_patches
+    renumber_ecm_clusters
     segment_cells
     segment_cells_tiled
     select_ecm_cluster_count
@@ -154,12 +155,14 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     CentralVoidResult
     CellECMContactResult
     CellECMEnrichmentResult
+    CellECMMarkerContrastResult
     ClusterCompositionResult
     ClusterCompositionDetails
     ComponentSummaryResult
     ContactMarkerContrastResult
     CooccurrenceDetails
     LabelReconstructionResult
+    IterativeLabelReconstructionResult
     LabelCorruptionResult
     LabelReconstructionScore
     CooccurrencePermResult
@@ -174,6 +177,7 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     ablation_roc_curves
     cell_ecm_enrichment
     cell_ecm_enrichment_matrix
+    cell_ecm_marker_contrast
     cell_ecm_contact
     cell_ecm_topology_sensitivity
     cluster_coherence
@@ -202,8 +206,10 @@ Statistical tests, spatial clustering, embeddings, and predictions.
     neighbourhood_clustering
     neighbourhood_features
     reconstruct_labels
+    reconstruct_labels_iteratively
     corrupt_labels
     label_anomaly_scores
+    fit_temperature
     score_label_reconstruction
     context_features
     pick_representative_samples
@@ -247,6 +253,7 @@ Visualise graphs, interactions, clusters, images, and learned representations.
     graph_triptych
     image_panel
     interaction_heatmap
+    marker_contrast_bars
     neighbourhood_clusters
     niche_bubble
     niche_bubble_table

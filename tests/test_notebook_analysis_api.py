@@ -492,3 +492,70 @@ def test_reconstruction_validates_probabilities_and_gate():
         mt.tl.reconstruct_labels(
             [0], [[.1, .9]], threshold=0., spatial_radius=2., min_neighbours=1,
         )
+
+
+def test_cooccurrence_contrast_is_difference_of_equal_unit_means():
+    cohort = {
+        "r1": graph_adata([0, 0, 1], [(0, 1)]),
+        "r2": graph_adata([0, 1, 1], [(0, 1), (1, 2)]),
+        "r3": graph_adata([0, 1], [(0, 1)]),
+        "r4": graph_adata([0, 0, 1, 1], [(0, 1), (1, 2), (2, 3)]),
+        "r5": graph_adata([0, 1, 1], [(1, 2)]),
+    }
+    meta = pd.DataFrame(
+        {"mouse": ["m1", "m1", "m2", "m3", "m4"], "group": ["KO", "KO", "KO", "WT", "WT"]},
+        index=list(cohort),
+    )
+    result = mt.tl.cluster_cooccurrence(
+        cohort, n_clusters=2, sample_meta=meta, unit_col="mouse",
+        group_col="group", missing="nan", return_details=True,
+    )
+    assert result.unit_meta["group"].to_dict() == {"m1": "KO", "m2": "KO", "m3": "WT", "m4": "WT"}
+    unit = {mouse: result.per_unit[mouse].enrichment for mouse in result.unit_meta.index}
+    expected = (unit["m1"] + unit["m2"]) / 2 - (unit["m3"] + unit["m4"]) / 2
+    assert np.isfinite(expected).all()
+    delta = result.contrast(case="KO", control="WT")
+    assert list(delta.index) == [0, 1] and list(delta.columns) == [0, 1]
+    np.testing.assert_allclose(delta.to_numpy(), expected)
+    np.testing.assert_allclose(result.contrast(case=["WT"], control=["KO"]).to_numpy(), -expected)
+    plain = mt.tl.cluster_cooccurrence(
+        cohort, n_clusters=2, sample_meta=meta, unit_col="mouse", missing="nan",
+    )
+    np.testing.assert_array_equal(result.enrichment, plain)
+
+
+def test_cooccurrence_contrast_skips_undefined_units_and_validates():
+    cohort = {
+        "a": graph_adata([0, 1], [(0, 1)]),
+        "b": graph_adata([0, 0], [(0, 1)]),
+        "c": graph_adata([0, 1, 1], [(0, 1), (1, 2)]),
+        "d": graph_adata([0, 0], [(0, 1)]),
+    }
+    meta = pd.DataFrame({"group": ["case", "case", "control", "empty"]}, index=list(cohort))
+    result = mt.tl.cluster_cooccurrence(
+        cohort, n_clusters=2, sample_meta=meta, group_col="group",
+        missing="nan", return_details=True,
+    )
+    a, b, c = (result.per_unit[sample].enrichment for sample in "abc")
+    assert np.isnan(b[1, 1])
+    delta = result.contrast(case="case", control="control")
+    np.testing.assert_allclose(delta.loc[1, 1], a[1, 1] - c[1, 1])
+    np.testing.assert_allclose(delta.loc[0, 0], (a[0, 0] + b[0, 0]) / 2 - c[0, 0])
+    assert np.isnan(result.contrast(case="empty", control="control").loc[1, 1])
+    with pytest.raises(KeyError, match="not in unit_meta"):
+        result.contrast(case="case", control="absent")
+    with pytest.raises(ValueError, match="overlap"):
+        result.contrast(case=["case", "control"], control="control")
+    with pytest.raises(ValueError, match="no units"):
+        result.contrast(case=[], control="control")
+    without_groups = mt.tl.cluster_cooccurrence(cohort, n_clusters=2, return_details=True)
+    assert without_groups.unit_meta is None
+    with pytest.raises(ValueError, match="group_col"):
+        without_groups.contrast(case="case", control="control")
+    with pytest.raises(KeyError, match="'batch'"):
+        mt.tl.cluster_cooccurrence(cohort, n_clusters=2, sample_meta=meta, group_col="batch")
+    mixed = meta.assign(mouse=["m1", "m1", "m1", "m2"])
+    with pytest.raises(ValueError, match="more than one group"):
+        mt.tl.cluster_cooccurrence(
+            cohort, n_clusters=2, sample_meta=mixed, unit_col="mouse", group_col="group",
+        )

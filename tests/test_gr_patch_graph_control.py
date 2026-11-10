@@ -93,3 +93,28 @@ def test_control_graph_converts_to_pyg(control):
     assert tuple(data.x.shape) == (adata.n_obs, 4)
     assert tuple(data.edge_index.shape) == result["edge_index"].shape
     assert tuple(data.edge_attr.shape) == result["edge_attr"].shape
+
+
+@pytest.mark.skipif(importlib.util.find_spec("torch_geometric") is None, reason="requires torch_geometric")
+def test_graphmae_fits_the_no_edges_control_without_warnings():
+    import warnings
+
+    adata = _graph_anndata()
+    result = mt.gr.patch_graph_control(adata, "no_edges")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)  # no statistics of an empty edge table
+        model = mt.nn.encode_graphmae(
+            adata,
+            graph_key=result.graph_key,
+            node_feature_key="X_cnn",
+            hidden_dim=8,
+            max_epochs=2,
+            random_state=0,
+            accelerator="cpu",
+            enable_progress_bar=False,
+        )
+
+    assert np.isfinite(adata.obsm["X_graphmae"]).all()
+    assert np.isfinite(model._feature_transform["edge_mean"]).all()
+    assert np.isfinite(model._feature_transform["edge_scale"]).all()

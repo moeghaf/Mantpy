@@ -67,6 +67,7 @@ __all__ = [
     "normalize",
     "preprocess_ecm",
     "remove_background_patches",
+    "renumber_ecm_clusters",
     "segment_cells",
     "segment_cells_tiled",
     "select_ecm_cluster_count",
@@ -2387,6 +2388,134 @@ def remove_background_patches(
         background_patches=background_patches,
         signal_counts=tuple(final_counts.items()),
     )
+
+
+def _cluster_number(value: Any) -> int:
+    """Return ``value`` as a non-negative integer cluster number."""
+    message = f"mapping must hold non-negative integers, got {value!r}."
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(message)
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(message) from exc
+    if number != value or number < 0:
+        raise ValueError(message)
+    return number
+
+
+def renumber_ecm_clusters(
+    adatas: Mapping[str, AnnData],
+    mapping: Mapping[int, int],
+    *,
+    cluster_key: str = "ecm_cluster",
+) -> dict[int, int]:
+    """Give the ECM clusters of a cohort new numbers.
+
+    A cluster number has no meaning of its own, and two clusters of similar
+    size can swap numbers between two runs of the same analysis. This function
+    rewrites the labels with a mapping of your choice, for example to keep the
+    numbers of an earlier run or of a published analysis. Every patch stays in
+    its cluster; only the numbers change.
+
+    Parameters
+    ----------
+    adatas
+        Mapping of sample identifier to an AnnData with
+        ``uns['ecm_patches']``. The patch tables are updated in place.
+    mapping
+        New number of each current cluster, as ``{current: new}``. A
+        ``pandas.Series`` indexed by the current number is accepted. Every
+        non-negative label of the cohort needs an entry, and no two entries
+        may give the same new number. Entries for numbers that label no patch
+        are allowed. All numbers are non-negative integers: negative labels,
+        such as the ``-1`` of patches outside the clustering, are kept as they
+        are.
+    cluster_key
+        Patch-table column that holds the labels.
+
+    Writes
+    ------
+    ``adata.uns['ecm_patches'][cluster_key]``
+        The renumbered int32 labels.
+    ``adata.uns['ecm_clustering']``
+        When the record of :func:`cluster_ecm_patches` for ``cluster_key`` is
+        present: ``cluster_counts`` is counted again from the renumbered
+        labels, ``label_order`` becomes ``'custom'`` and a stored
+        ``label_mapping`` (model label to written label) follows the new
+        numbers.
+    ``adata.uns['mantpy']['pp']['renumber_ecm_clusters']``
+        The applied mapping.
+
+    Returns
+    -------
+    dict[int, int]
+        Number of patches in each cluster of the cohort, keyed by the new
+        number in increasing order.
+
+    Raises
+    ------
+    KeyError
+        If a sample has no ``cluster_key`` column.
+    ValueError
+        If ``mapping`` holds a negative or non-integer number, gives two
+        clusters the same number, or has no entry for a label of the cohort.
+        Nothing is written in these cases.
+
+    Examples
+    --------
+    Swap the numbers of clusters 3 and 4 of a six-cluster cohort::
+
+        mt.pp.renumber_ecm_clusters(cohort, {0: 0, 1: 1, 2: 2, 3: 4, 4: 3, 5: 5})
+    """
+    numbers = {_cluster_number(current): _cluster_number(new) for current, new in dict(mapping).items()}
+    if len(set(numbers.values())) != len(numbers):
+        raise ValueError("mapping gives two clusters the same number.")
+
+    current_labels: dict[str, np.ndarray] = {}
+    for sample, adata in adatas.items():
+        patches = adata.uns.get(ECM_PATCHES_KEY)
+        if patches is None or cluster_key not in patches:
+            raise KeyError(f"Sample {sample!r} has no cluster labels in {cluster_key!r}.")
+        current_labels[sample] = patches[cluster_key].to_numpy(dtype=int)
+    present = sorted({int(label) for labels in current_labels.values() for label in np.unique(labels) if label >= 0})
+    missing = [label for label in present if label not in numbers]
+    if missing:
+        raise ValueError(f"mapping has no entry for the cluster labels {missing}.")
+
+    lookup = np.full(max(present, default=-1) + 1, -1, dtype=np.int32)
+    for label in present:
+        lookup[label] = numbers[label]
+    new_labels: dict[str, np.ndarray] = {}
+    for sample, labels in current_labels.items():
+        renumbered = labels.astype(np.int32)
+        clustered = labels >= 0
+        renumbered[clustered] = lookup[labels[clustered]]
+        new_labels[sample] = renumbered
+    values, value_counts = np.unique(np.concatenate(list(new_labels.values())), return_counts=True)
+    cohort_counts = {int(value): int(count) for value, count in zip(values, value_counts, strict=True)}
+
+    logged = {"cluster_key": cluster_key, "mapping": {str(current): numbers[current] for current in sorted(numbers)}}
+    for sample, adata in adatas.items():
+        patches = adata.uns[ECM_PATCHES_KEY].copy()
+        patches[cluster_key] = new_labels[sample]
+        adata.uns[ECM_PATCHES_KEY] = patches
+        record = adata.uns.get("ecm_clustering")
+        if isinstance(record, Mapping) and record.get("cluster_key") == cluster_key:
+            # A new record with new nested entries: the params log of the
+            # clustering call shares the old ones and keeps what it logged.
+            updated = dict(record)
+            updated["cluster_counts"] = {str(label): count for label, count in cohort_counts.items()}
+            updated["label_order"] = "custom"
+            if "label_mapping" in record:
+                updated["label_mapping"] = {
+                    str(model_label): numbers[int(written)]
+                    for model_label, written in record["label_mapping"].items()
+                    if int(written) in numbers
+                }
+            adata.uns["ecm_clustering"] = updated
+        _log_params(adata, "pp", {"renumber_ecm_clusters": {**logged, "mapping": logged["mapping"].copy()}})
+    return {label: count for label, count in cohort_counts.items() if label >= 0}
 
 
 def compare_ecm_patches(

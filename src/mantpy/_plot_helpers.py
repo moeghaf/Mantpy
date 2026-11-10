@@ -37,6 +37,7 @@ from anndata import AnnData
 from matplotlib.axes import Axes
 from matplotlib.collections import PatchCollection
 from matplotlib.image import AxesImage
+from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 from matplotlib.patches import Polygon as MplPolygon
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -125,6 +126,142 @@ def _ecm_node_index(node_id, node_attrs: dict | None = None) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Per-sample points on a bar chart, and bars of a marker contrast
+# ---------------------------------------------------------------------------
+_GROUP_MARKERS = ("o", "^", "s", "D", "v", "P", "X", "*")
+
+
+def _sample_markers(samples, sample_groups) -> tuple[dict, dict]:
+    """Marker of each sample, and the marker of each group for the legend."""
+    if sample_groups is None:
+        return dict.fromkeys(samples, "o"), {}
+    groups = pd.Series(sample_groups)
+    missing = [sample for sample in samples if sample not in groups.index]
+    if missing:
+        raise ValueError(f"sample_groups has no entry for {missing}.")
+    names = sorted({str(groups.loc[sample]) for sample in samples})
+    by_group = {name: _GROUP_MARKERS[i % len(_GROUP_MARKERS)] for i, name in enumerate(names)}
+    return {sample: by_group[str(groups.loc[sample])] for sample in samples}, by_group
+
+
+def _group_handles(group_markers: dict) -> list:
+    """Legend entries, one marker per sample group."""
+    return [
+        Line2D([], [], linestyle="none", marker=marker, markersize=5, markerfacecolor="white",
+               markeredgecolor="black", label=str(group))
+        for group, marker in group_markers.items()
+    ]
+
+
+def marker_contrast_bars(
+    contrast,
+    *,
+    order: str | Sequence[str] = "ascending",
+    color: str = "#2A9D8F",
+    negative_color: str = "#bdbdbd",
+    show_samples: bool = True,
+    sample_groups=None,
+    sample_size: float = 14,
+    legend: bool = True,
+    xlabel: str = "Contacted minus other patches",
+    title: str | None = None,
+    tick_fontsize: float = 9,
+    title_fontsize: float = 12,
+    figsize: tuple[float, float] = (4.6, 3.8),
+    ax: Axes | None = None,
+    save=None,
+    show: bool = True,
+) -> Axes:
+    """Horizontal bars of a marker contrast, with one point per sample.
+
+    Draws the output of ``mt.tl.cell_ecm_marker_contrast``: one bar per marker
+    for the mean over the samples, and one point per sample on each bar.
+
+    Parameters
+    ----------
+    contrast
+        The result of ``mt.tl.cell_ecm_marker_contrast``; or a table of
+        samples by markers, whose column means are the bars; or a Series with
+        one value per marker, drawn as bars without points.
+    order
+        ``'ascending'`` (default; the largest value at the top),
+        ``'descending'``, ``'input'`` (keep the given order, first marker at
+        the bottom) or a list of marker names from bottom to top.
+    color, negative_color
+        Bar colour of the markers with a positive value, and of those with a
+        zero or negative value.
+    show_samples
+        Draw the per-sample points when ``contrast`` holds them.
+    sample_groups
+        Mapping or Series from sample name to a group (for example the
+        animal). Each group gets its own marker shape and a legend entry.
+    sample_size
+        Marker area of the sample points.
+    legend
+        Draw the legend of the sample groups.
+    xlabel, title
+        Axis label and optional title.
+    ax, save, show
+        Standard mantpy plotting controls.
+
+    Returns
+    -------
+    matplotlib Axes.
+    """
+    if isinstance(contrast, pd.DataFrame):
+        per_sample, mean = contrast, contrast.mean()
+    elif isinstance(contrast, pd.Series):
+        per_sample, mean = None, contrast
+    elif hasattr(contrast, "per_sample") and hasattr(contrast, "mean"):
+        per_sample, mean = contrast.per_sample, contrast.mean
+    else:
+        raise TypeError(
+            "contrast must be the result of mt.tl.cell_ecm_marker_contrast, a table of samples by markers "
+            "or a Series of one value per marker."
+        )
+    mean = pd.Series(mean, dtype=float)
+    if isinstance(order, str):
+        if order == "ascending":
+            mean = mean.sort_values()
+        elif order == "descending":
+            mean = mean.sort_values(ascending=False)
+        elif order != "input":
+            raise ValueError("order must be 'ascending', 'descending', 'input' or a list of marker names.")
+    else:
+        unknown = [marker for marker in order if marker not in mean.index]
+        if unknown:
+            raise ValueError(f"order names markers that are not in the contrast: {unknown}.")
+        mean = mean.loc[list(order)]
+    points = per_sample if show_samples else None
+    markers, group_markers = ({}, {}) if points is None else _sample_markers(list(points.index), sample_groups)
+
+    fig, ax = _get_ax(ax, figsize=figsize)
+    positions = np.arange(len(mean))
+    ax.barh(
+        positions, mean.to_numpy(), height=0.66, edgecolor="black", linewidth=0.8,
+        color=[color if value > 0 else negative_color for value in mean],
+    )
+    if points is not None:
+        for sample in points.index:
+            ax.scatter(
+                points.loc[sample, mean.index].to_numpy(dtype=float), positions,
+                marker=markers[sample], s=sample_size, linewidths=0.8, zorder=3,
+                facecolors="white", edgecolors="black",
+            )
+    ax.axvline(0, color="black", lw=0.7)
+    ax.set_yticks(positions)
+    ax.set_yticklabels([str(marker) for marker in mean.index], fontsize=tick_fontsize)
+    ax.tick_params(axis="x", labelsize=tick_fontsize)
+    ax.set_xlabel(xlabel, fontsize=tick_fontsize)
+    if legend and group_markers:
+        ax.legend(handles=_group_handles(group_markers), fontsize=7, frameon=False, loc="best")
+    if title is not None:
+        ax.set_title(title, loc="left", fontsize=title_fontsize, fontweight="bold")
+    _save_and_show(fig, save, show)
+    return ax
+
+
+# ---------------------------------------------------------------------------
 # log2 enrichment bars with FDR significance stars
 # ---------------------------------------------------------------------------
 def cell_ecm_enrichment_bars(
@@ -140,6 +277,10 @@ def cell_ecm_enrichment_bars(
     title: str | None = None,
     annotate: str = "stars",
     qfloor: float = 2e-4,
+    show_samples: bool = False,
+    sample_groups=None,
+    sample_size: float = 22,
+    legend: bool = True,
     star_fontsize: float = 14,
     effect_fontsize: float = 8,
     tick_fontsize: float = 11,
@@ -155,7 +296,10 @@ def cell_ecm_enrichment_bars(
 ) -> Axes:
     """Bar chart of log2(observed / expected) ECM-cluster enrichment for a focal cell type.
 
-    Reads ``adata.uns[key]`` written by ``mt.tl.cell_ecm_enrichment``.
+    Reads ``adata.uns[key]`` written by ``mt.tl.cell_ecm_enrichment``, or takes
+    the result of ``mt.tl.cell_ecm_enrichment(..., return_details=True)``
+    directly. With ``show_samples=True`` the value of every sample (ROI) is
+    drawn as a point on its bar, so the spread behind the pooled bar is visible.
     The ``annotate`` switch chooses the bar annotation style:
 
     - ``'stars'`` (default) — BH-FDR stars: ``***`` p<0.001, ``**`` p<0.01,
@@ -165,19 +309,34 @@ def cell_ecm_enrichment_bars(
     - ``'effect_q'`` — the signed log2 effect size and floored permutation q
       (e.g. ``+2.1`` / ``q<2e-4``), avoiding floor-saturated stars when ``n_perm`` makes every
       significant bar hit the same ``***``.
+    - ``'none'`` writes nothing on the bars (for example when ``n_perm=0``
+      left no q-values).
 
     Parameters
     ----------
     adata
-        AnnData carrying the enrichment table at ``adata.uns[key]``.
+        AnnData carrying the enrichment table at ``adata.uns[key]`` (and the
+        per-sample table at ``adata.uns[key + '_per_roi']``), or the details
+        returned by ``mt.tl.cell_ecm_enrichment(..., return_details=True)``.
     key
         ``adata.uns`` key for the enrichment DataFrame.
     alpha
         BH-FDR threshold for significance stars / the ``effect_q`` colour
         cut.
     annotate
-        ``'stars'`` (default), ``'effect'`` (signed effect only) or
-        ``'effect_q'`` (signed effect + floored q).
+        ``'stars'`` (default), ``'effect'`` (signed effect only),
+        ``'effect_q'`` (signed effect + floored q) or ``'none'``.
+    show_samples
+        Draw one point per sample and cluster from the per-sample table. A
+        sample without any contact to a cluster has no finite ratio; it is
+        drawn as an open grey marker below the bars.
+    sample_groups
+        Mapping or Series from sample name to a group (for example the
+        animal). Each group gets its own marker shape and a legend entry.
+    sample_size
+        Marker area of the sample points.
+    legend
+        Draw the legend of the sample groups.
     qfloor
         The permutation q-value floor printed as ``q<{qfloor}`` in the
         ``'effect_q'`` style (default ``2e-4``, i.e. ``n_perm=5000``).
@@ -204,13 +363,29 @@ def cell_ecm_enrichment_bars(
     -------
     matplotlib Axes (the bar-chart axes).
     """
-    if annotate not in ("stars", "effect", "effect_q"):
-        raise ValueError(f"annotate={annotate!r}: choose 'stars', 'effect' or 'effect_q'.")
-    if key not in adata.uns:
-        raise ValueError(
-            "Key '" + key + "' not found in adata.uns. Run mt.tl.cell_ecm_enrichment(adata, cell_type=...) first."
-        )
-    df = adata.uns[key]
+    if annotate not in ("stars", "effect", "effect_q", "none"):
+        raise ValueError(f"annotate={annotate!r}: choose 'stars', 'effect', 'effect_q' or 'none'.")
+    if hasattr(adata, "pooled"):  # details from mt.tl.cell_ecm_enrichment(..., return_details=True)
+        df, per_sample = adata.pooled, getattr(adata, "per_roi", None)
+    else:
+        if key not in adata.uns:
+            raise ValueError(
+                "Key '" + key + "' not found in adata.uns. "
+                "Run mt.tl.cell_ecm_enrichment(adata, cell_type=...) first."
+            )
+        df, per_sample = adata.uns[key], adata.uns.get(key + "_per_roi")
+    if show_samples:
+        if per_sample is None:
+            raise ValueError(
+                "show_samples needs the per-sample table: pass the result of "
+                "mt.tl.cell_ecm_enrichment(..., return_details=True), or an AnnData holding "
+                "adata.uns['" + key + "_per_roi']."
+            )
+        missing = {"roi", "cluster", "log2_enr"}.difference(per_sample.columns)
+        if missing:
+            raise ValueError(f"The per-sample enrichment table is missing columns {sorted(missing)}.")
+        samples = list(dict.fromkeys(per_sample["roi"]))
+        markers, group_markers = _sample_markers(samples, sample_groups)
     K = len(df)
     obs_enr = df["log2_enr"].to_numpy()
     if annotate in ("stars", "effect_q") and "p_fdr" not in df:
@@ -228,8 +403,37 @@ def cell_ecm_enrichment_bars(
     ax.bar(np.arange(K), obs_enr, color=colors, edgecolor="black", linewidth=0.8)
     ax.axhline(0, color="black", lw=0.7)
     y_max = float(max(abs(obs_enr.min()), abs(obs_enr.max()), 1.0))
+    if show_samples:
+        values = per_sample["log2_enr"].to_numpy(dtype=float)
+        has_contact = np.isfinite(values)
+        if "n_obs" in per_sample:
+            has_contact &= per_sample["n_obs"].to_numpy() > 0
+        if has_contact.any():
+            y_max = max(y_max, float(np.abs(values[has_contact]).max()))
+        position = {cluster: k for k, cluster in enumerate(df["cluster"])} if "cluster" in df else {}
+        spread = np.linspace(-0.2, 0.2, len(samples)) if len(samples) > 1 else [0.0]
+        offsets = dict(zip(samples, spread, strict=True))
+        rows = zip(has_contact, values, per_sample["roi"], per_sample["cluster"], strict=True)
+        for contact, value, sample, cluster in rows:
+            ax.scatter(
+                position.get(cluster, cluster) + offsets[sample],
+                value if contact else -1.18 * y_max,
+                marker=markers[sample], s=sample_size, linewidths=0.8, zorder=3,
+                facecolors="white" if contact else "none",
+                edgecolors="black" if contact else "grey",
+            )
+        handles = _group_handles(group_markers)
+        if not has_contact.all():
+            handles.append(
+                Line2D([], [], linestyle="none", marker="o", markersize=5, markerfacecolor="none",
+                       markeredgecolor="grey", label="no contact")
+            )
+        if legend and handles:
+            ax.legend(handles=handles, fontsize=7, frameon=False, loc="best")
     for k in range(K):
         up = obs_enr[k] >= 0
+        if annotate == "none":
+            continue
         if annotate == "effect":
             label = f"{obs_enr[k]:+.1f}"
             y_text = obs_enr[k] + (0.12 * y_max if up else -0.12 * y_max)
@@ -816,6 +1020,8 @@ def plot_mean_composition(
     palette,
     group_order,
     target_cluster,
+    title: str | None = "Mean ECM composition per group",
+    group_labels: bool | Sequence[str] = False,
 ) -> Axes:
     """Stacked-bar of mean ECM-cluster composition per experimental group.
 
@@ -823,6 +1029,9 @@ def plot_mean_composition(
     'Naive_WT', 'Infected_KO', 'Infected_WT']``).  The bar for each ECM
     cluster is taken from ``group_mean[cl]``; the ``target_cluster`` bar
     is drawn with a heavier edge to identify the highlighted cluster.
+    When the index of ``group_mean`` holds every label of ``group_order``
+    the rows are taken by label, so the bars follow ``group_order``
+    whatever the row order; otherwise the rows are taken in their own order.
 
     Parameters
     ----------
@@ -841,6 +1050,12 @@ def plot_mean_composition(
     target_cluster
         Cluster identifier whose bar is drawn with a heavier 1.4-pt edge
         (the rest are 0.6-pt) so the highlighted cluster stands out.
+    title
+        Axis title; ``None`` draws no title.
+    group_labels
+        ``True`` writes the entries of ``group_order`` under the bars; a
+        sequence gives the labels to write instead. ``False`` (default)
+        leaves the x-axis without ticks.
 
     Returns
     -------
@@ -854,6 +1069,19 @@ def plot_mean_composition(
     >>> #                        group_order=GROUP_ORDER,
     >>> #                        target_cluster=TARGET_CLUSTER)  # doctest: +SKIP
     """
+    group_order = list(group_order)
+    if pd.Index(group_order).isin(group_mean.index).all():
+        group_mean = group_mean.loc[group_order]
+    elif len(group_mean) != len(group_order):
+        raise ValueError(
+            f"group_mean has {len(group_mean)} rows but group_order has {len(group_order)} groups."
+        )
+    if isinstance(group_labels, bool):
+        labels = [str(group) for group in group_order] if group_labels else None
+    else:
+        labels = [str(label) for label in group_labels]
+        if len(labels) != len(group_order):
+            raise ValueError("group_labels must have one label for each group in group_order.")
     x = np.arange(len(group_order))
     bottoms = np.zeros(len(group_order))
     for cl in ecm_cols:
@@ -871,8 +1099,13 @@ def plot_mean_composition(
         bottoms += vals
     ax.set_ylim(0, 1)
     ax.set_xlim(-0.5, len(group_order) - 0.5)
-    ax.set_title("Mean ECM composition per group", fontsize=11, fontweight="bold")
-    ax.set_xticks([])
+    if title is not None:
+        ax.set_title(title, fontsize=11, fontweight="bold")
+    if labels is None:
+        ax.set_xticks([])
+    else:
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
     ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, fontsize=8, title="ECM cluster")
     return ax
 
@@ -890,6 +1123,7 @@ def plot_delta_masked(
     vlim: float | None = None,
     fontsize: float = 9,
     tick_fontsize: float = 10,
+    show_values: bool = False,
 ) -> AxesImage:
     """FDR-masked Δ heatmap of cluster co-occurrence (KO − WT).
 
@@ -901,14 +1135,17 @@ def plot_delta_masked(
 
     Set ``mask_nonsignificant=False`` for a purely descriptive heatmap. In
     that mode all contrasts are shown, no p-value or star annotation is drawn,
-    and ``p_fdr`` may be ``None``.
+    and ``p_fdr`` may be ``None``; ``show_values=True`` then writes the Δ
+    value in every defined cell.
 
     Parameters
     ----------
     ax
         Axis to draw on.
     delta
-        ``K × K`` ndarray of pairwise Δ values (e.g. Δlog₂ KO − WT).
+        ``K × K`` array or table of pairwise Δ values (e.g. Δlog₂ KO − WT),
+        such as the result of :meth:`mantpy.tl.CooccurrenceDetails.contrast`.
+        Undefined (NaN) cells are left white.
     p_fdr
         ``K × K`` ndarray of BH-FDR-adjusted p-values, aligned with
         ``delta``.
@@ -917,18 +1154,22 @@ def plot_delta_masked(
     K
         Cluster count (row/column extent).
     cmap
-        Diverging colormap.  ``None`` → ``plt.cm.RdBu_r``.  A *copy* is
-        made before ``set_bad('white')`` so the caller's cmap is not
-        mutated.
+        Diverging colormap.  ``None`` → ``plt.cm.RdBu_r``.  A copy with a
+        white colour for undefined cells is used, so the caller's cmap is
+        not mutated.
     alpha_fdr
         FDR threshold for masking + base star.
     mask_nonsignificant
         Apply FDR masking and annotations. ``False`` disables inferential
         display and does not require ``p_fdr``.
     vlim
-        Symmetric colour-axis half-range.  ``None`` → ``max(|delta|, 1.0)``.
+        Symmetric colour-axis half-range.  ``None`` → ``max(|delta|, 1.0)``
+        over the defined cells.
     fontsize, tick_fontsize
         Standard matplotlib text controls.
+    show_values
+        With ``mask_nonsignificant=False``, write the signed Δ value in each
+        defined cell. Ignored when masking, which writes its own annotations.
 
     Returns
     -------
@@ -937,13 +1178,13 @@ def plot_delta_masked(
     """
     if cmap is None:
         cmap = plt.cm.RdBu_r
-    cmap = cmap.copy()
-    cmap.set_bad("white")
+    cmap = cmap.with_extremes(bad="white")
     delta = np.asarray(delta, dtype=float)
     if delta.shape != (K, K):
         raise ValueError(f"delta must have shape {(K, K)}; got {delta.shape}.")
     if vlim is None:
-        vlim = float(max(np.abs(delta).max(), 1.0))
+        defined = np.abs(delta[np.isfinite(delta)])
+        vlim = float(max(defined.max(), 1.0)) if defined.size else 1.0
     if mask_nonsignificant:
         if p_fdr is None:
             raise ValueError("p_fdr is required when mask_nonsignificant=True.")
@@ -977,6 +1218,20 @@ def plot_delta_masked(
                     fontsize=fontsize,
                     fontweight="bold",
                     linespacing=0.85,
+                    color="white" if abs(delta[i, j]) > vlim * 0.55 else "black",
+                )
+    elif show_values:
+        for i in range(K):
+            for j in range(K):
+                if not np.isfinite(delta[i, j]):
+                    continue
+                ax.text(
+                    j,
+                    i,
+                    f"{delta[i, j]:+.1f}",
+                    ha="center",
+                    va="center",
+                    fontsize=fontsize,
                     color="white" if abs(delta[i, j]) > vlim * 0.55 else "black",
                 )
     ax.set_xticks(np.arange(K + 1) - 0.5, minor=True)

@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 
 def _zscore(a: np.ndarray) -> np.ndarray:
+    if len(a) == 0:  # nothing to standardise (the edge table of a graph without edges)
+        return a
     return (a - a.mean(0)) / (a.std(0) + 1e-8)
 
 
@@ -220,7 +222,13 @@ class GraphMAE:
             raw_ea = np.asarray(
                 raw_ea.detach().cpu().numpy() if torch.is_tensor(raw_ea) else raw_ea, dtype=np.float32
             )
-            self._feature_transform.update(edge_mean=raw_ea.mean(axis=0), edge_scale=raw_ea.std(axis=0) + 1e-8)
+            if len(raw_ea):
+                self._feature_transform.update(edge_mean=raw_ea.mean(axis=0), edge_scale=raw_ea.std(axis=0) + 1e-8)
+            else:  # a graph without edges (the "no_edges" control) has no edge statistics to fit
+                self._feature_transform.update(
+                    edge_mean=np.zeros(raw_ea.shape[1:], dtype=np.float32),
+                    edge_scale=np.ones(raw_ea.shape[1:], dtype=np.float32),
+                )
         if not standardize:
             self._feature_transform = {
                 key: np.zeros_like(value) if key.endswith("_mean") else np.ones_like(value)

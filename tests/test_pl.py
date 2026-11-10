@@ -23,6 +23,49 @@ def test_ecm_centroid_table_returns_plot_source_data(adata_with_patches) -> None
     assert len(table) > 0
 
 
+@pytest.mark.parametrize(("kwargs", "expected"), [({}, "z"), ({"colorbar_label": "z-score"}, "z-score")])
+def test_ecm_centroid_heatmap_colorbar_label(adata_with_patches, kwargs, expected) -> None:
+    import matplotlib.pyplot as plt
+
+    axis = mt.pl.ecm_centroid_heatmap(adata_with_patches, K_ecm=3, show=False, **kwargs)
+    colorbar_axes = [other for other in axis.figure.axes if other is not axis]
+    assert [other.get_ylabel() for other in colorbar_axes] == [expected]
+    plt.close(axis.figure)
+
+
+def test_ecm_centroid_heatmap_infers_cluster_count(adata_with_patches) -> None:
+    import matplotlib.pyplot as plt
+
+    axis = mt.pl.ecm_centroid_heatmap(adata_with_patches, show=False)
+    n_clusters = mt.pl.ecm_centroid_table(adata_with_patches)["cluster"].nunique()
+    assert len(axis.get_yticks()) == n_clusters
+    assert len(axis.get_yticks(minor=True)) == n_clusters + 1
+    plt.close(axis.figure)
+
+
+@pytest.mark.parametrize("values", ["z_score", "mean_intensity"])
+def test_ecm_centroid_heatmap_can_show_the_cluster_means(adata_with_patches, values) -> None:
+    import matplotlib.pyplot as plt
+
+    table = mt.pl.ecm_centroid_table(adata_with_patches, K_ecm=3)
+    markers = list(dict.fromkeys(table["marker"]))
+    expected = table.pivot(index="cluster", columns="marker", values=values)[markers].to_numpy()
+    axis = mt.pl.ecm_centroid_heatmap(adata_with_patches, K_ecm=3, values=values, show=False)
+    np.testing.assert_allclose(np.asarray(axis.images[0].get_array()), expected)
+    low, high = axis.images[0].get_clim()
+    assert high == pytest.approx(np.abs(expected).max())
+    assert low == pytest.approx(-high)
+    if values == "z_score":  # the default
+        default = mt.pl.ecm_centroid_heatmap(adata_with_patches, K_ecm=3, show=False)
+        np.testing.assert_allclose(np.asarray(default.images[0].get_array()), expected)
+    plt.close("all")
+
+
+def test_ecm_centroid_heatmap_rejects_an_unknown_quantity(adata_with_patches) -> None:
+    with pytest.raises(ValueError, match="values"):
+        mt.pl.ecm_centroid_heatmap(adata_with_patches, values="median", show=False)
+
+
 def test_node_value_overlay_retains_spatial_and_value_encoding() -> None:
     import matplotlib.pyplot as plt
 

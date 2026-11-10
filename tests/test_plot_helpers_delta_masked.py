@@ -8,6 +8,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pytest
 from matplotlib.image import AxesImage
 
@@ -115,3 +116,18 @@ class TestPanelDeltaMasked:
         for k, lab in enumerate(ax.get_yticklabels()):
             assert lab.get_color() == palette[k]
             assert lab.get_fontweight() == "bold"
+
+    def test_descriptive_mode_can_write_values_and_skips_undefined_cells(self):
+        delta = pd.DataFrame([[0.0, 1.5], [np.nan, -3.0]])
+        fig, ax = plt.subplots()
+        im = mt.pl.plot_delta_masked(
+            ax,
+            delta,
+            palette={0: "#000", 1: "#777"},
+            K=2,
+            mask_nonsignificant=False,
+            show_values=True,
+        )
+
+        assert sorted(text.get_text() for text in ax.texts) == ["+0.0", "+1.5", "-3.0"]
+        assert im.get_clim() == (-3.0, 3.0)

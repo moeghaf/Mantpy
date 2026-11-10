@@ -1091,3 +1091,123 @@ def test_tiles_to_embedding_clustering_round_trip() -> None:
         assert len(set(pooled_lattice[labels == label].tolist())) == 1
     assert list(result.component_sizes) == sorted(result.component_sizes, reverse=True)
     assert sum(result.component_sizes) == int(signal.sum())
+
+
+# ---------------------------------------------------------------------------
+# mt.pp.renumber_ecm_clusters
+# ---------------------------------------------------------------------------
+
+
+def _clustered_cohort() -> tuple[dict[str, ad.AnnData], np.ndarray]:
+    """The embedding cohort after clustering: 50, 30 and 10 patches in clusters 0, 1 and 2, and 30 background."""
+    cohort, embedding, _ = _embedding_cohort()
+    mt.pp.cluster_ecm_patches(cohort, n_clusters=3, subset="signal", embedding=embedding, order_by="size")
+    return cohort, _labels(cohort).copy()
+
+
+def test_renumber_ecm_clusters_changes_the_numbers_only() -> None:
+    cohort, before = _clustered_cohort()
+    features_before = _feature_matrix(cohort)
+
+    counts = mt.pp.renumber_ecm_clusters(cohort, {0: 2, 1: 0, 2: 1})
+
+    after = _labels(cohort)
+    assert after.dtype == np.int32
+    assert np.array_equal(after, np.select([before == 0, before == 1, before == 2], [2, 0, 1], default=-1))
+    assert np.array_equal(after < 0, before < 0)
+    assert counts == {0: 30, 1: 10, 2: 50}
+    assert list(counts) == [0, 1, 2]
+    assert np.array_equal(_feature_matrix(cohort), features_before)
+
+
+def test_renumber_ecm_clusters_updates_the_clustering_record() -> None:
+    cohort, _ = _clustered_cohort()
+    records_before = {sample: dict(adata.uns["ecm_clustering"]) for sample, adata in cohort.items()}
+    model_to_written = dict(next(iter(records_before.values()))["label_mapping"])
+    new_number = {0: 2, 1: 0, 2: 1}
+    changed = {"cluster_counts", "label_order", "label_mapping"}
+
+    mt.pp.renumber_ecm_clusters(cohort, pd.Series(new_number))
+
+    for sample, adata in cohort.items():
+        record = adata.uns["ecm_clustering"]
+        assert record["cluster_counts"] == {"-1": 30, "0": 30, "1": 10, "2": 50}
+        assert record["label_order"] == "custom"
+        assert record["label_mapping"] == {model: new_number[written] for model, written in model_to_written.items()}
+        assert {key: value for key, value in record.items() if key not in changed} == {
+            key: value for key, value in records_before[sample].items() if key not in changed
+        }
+        log = adata.uns["mantpy"]["pp"]
+        assert log["renumber_ecm_clusters"] == {"cluster_key": "ecm_cluster", "mapping": {"0": 2, "1": 0, "2": 1}}
+        # The log of the clustering call keeps what that call wrote.
+        assert log["cluster_ecm_patches"]["cluster_counts"] == {"-1": 30, "0": 50, "1": 30, "2": 10}
+        assert log["cluster_ecm_patches"]["label_order"] == "descending_size_then_original_label"
+        assert log["cluster_ecm_patches"]["label_mapping"] == model_to_written
+
+
+def test_renumber_ecm_clusters_round_trip_restores_the_labels() -> None:
+    cohort, before = _clustered_cohort()
+
+    mt.pp.renumber_ecm_clusters(cohort, {0: 1, 1: 2, 2: 0})
+    counts = mt.pp.renumber_ecm_clusters(cohort, {1: 0, 2: 1, 0: 2})
+
+    assert np.array_equal(_labels(cohort), before)
+    assert counts == {0: 50, 1: 30, 2: 10}
+
+
+def test_renumber_ecm_clusters_accepts_new_numbers_and_unused_entries() -> None:
+    cohort, before = _clustered_cohort()
+
+    counts = mt.pp.renumber_ecm_clusters(cohort, {0: 10, 1: 4, 2: 7, 5: 0})
+
+    assert counts == {4: 30, 7: 10, 10: 50}
+    assert np.array_equal(_labels(cohort) == 10, before == 0)
+    record = next(iter(cohort.values())).uns["ecm_clustering"]
+    assert record["cluster_counts"] == {"-1": 30, "4": 30, "7": 10, "10": 50}
+
+
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        ({0: 1, 1: 1, 2: 0}, "same number"),
+        ({0: 1, 1: 0}, r"no entry for the cluster labels \[2\]"),
+        ({0: 1, 1: 0, 2: -1}, "non-negative integers"),
+        ({-1: 3, 0: 1, 1: 0, 2: 2}, "non-negative integers"),
+        ({0: 1.5, 1: 0, 2: 2}, "non-negative integers"),
+        ({0: True, 1: 0, 2: 2}, "non-negative integers"),
+        ({0: "1", 1: 0, 2: 2}, "non-negative integers"),
+    ],
+)
+def test_renumber_ecm_clusters_rejects_a_bad_mapping(mapping: dict, message: str) -> None:
+    cohort, before = _clustered_cohort()
+    records_before = [dict(adata.uns["ecm_clustering"]) for adata in cohort.values()]
+
+    with pytest.raises(ValueError, match=message):
+        mt.pp.renumber_ecm_clusters(cohort, mapping)
+
+    # Nothing is written.
+    assert np.array_equal(_labels(cohort), before)
+    assert [adata.uns["ecm_clustering"] for adata in cohort.values()] == records_before
+    assert all("renumber_ecm_clusters" not in adata.uns["mantpy"]["pp"] for adata in cohort.values())
+
+
+def test_renumber_ecm_clusters_requires_the_label_column() -> None:
+    cohort, before = _clustered_cohort()
+
+    with pytest.raises(KeyError, match="other_key"):
+        mt.pp.renumber_ecm_clusters(cohort, {0: 1, 1: 0, 2: 2}, cluster_key="other_key")
+
+    assert np.array_equal(_labels(cohort), before)
+
+
+def test_renumber_ecm_clusters_other_column_leaves_the_record() -> None:
+    cohort, before = _clustered_cohort()
+    _set_labels(cohort, before, key="second")
+    records_before = [dict(adata.uns["ecm_clustering"]) for adata in cohort.values()]
+
+    counts = mt.pp.renumber_ecm_clusters(cohort, {0: 2, 1: 1, 2: 0}, cluster_key="second")
+
+    assert counts == {0: 10, 1: 30, 2: 50}
+    assert np.array_equal(_labels(cohort), before)
+    assert np.array_equal(_labels(cohort, key="second") == 2, before == 0)
+    assert [adata.uns["ecm_clustering"] for adata in cohort.values()] == records_before

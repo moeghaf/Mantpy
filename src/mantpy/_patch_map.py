@@ -10,6 +10,7 @@ import pandas as pd
 from anndata import AnnData
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize, to_rgb
+from matplotlib.lines import Line2D
 
 
 def patch_map(
@@ -31,6 +32,7 @@ def patch_map(
     categorical=None,
     background_label=-1,
     colorbar=False,
+    legend=False,
 ):
     """Draw categorical labels or continuous values on the original patch grid.
 
@@ -40,6 +42,11 @@ def patch_map(
     empty boundary rows and columns. ``extent`` supports physical-coordinate
     overlays; the default is the usual imshow lattice in grid-index units.
     Missing values and the categorical background label leave empty pixels.
+
+    ``legend=True`` adds one entry per drawn category below the map; a mapping
+    is passed to :meth:`matplotlib.axes.Axes.legend` as keyword arguments.
+    Entries follow the order of a ``palette`` mapping, otherwise the order of
+    first appearance. Continuous values use ``colorbar`` instead.
     """
     from mantpy._plot_helpers import patch_domain_map
     from mantpy.pl import categorical_palette
@@ -149,4 +156,17 @@ def patch_map(
     image.set_extent(resolved_extent)
     if colorbar and scalar is not None:
         ax.figure.colorbar(scalar, ax=ax)
+    if legend is not False and legend is not None:
+        if not categorical:
+            raise ValueError("legend applies to categorical labels; use colorbar=True for continuous values.")
+        drawn = set(categories)
+        ordered = [name for name in mapping if name in drawn] if isinstance(palette, Mapping) else categories
+        handles = [
+            Line2D([], [], marker="s", linestyle="", markersize=8, color=to_rgb(mapping[name]), label=str(name))
+            for name in ordered
+        ]
+        options = {"loc": "upper center", "bbox_to_anchor": (0.5, -0.02), "ncol": min(len(handles), 3), "frameon": False}
+        if isinstance(legend, Mapping):
+            options.update(legend)
+        ax.legend(handles=handles, **options)
     return ax

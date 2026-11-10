@@ -8,6 +8,85 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [1.3.0] - 2026-11-10
+
+### Added
+
+Helpers for scoring and controlling a single-image patch analysis. Both are new
+functions; no existing output changes.
+
+- `mt.tl.score_patch_labels` scores patch labels, or a pixel label image,
+  against a pixel annotation of the same image. Every annotated pixel inside an
+  analysed patch counts once. It returns the pixel contingency table, its
+  adjusted Rand index, a one-to-one matching of clusters to annotated classes,
+  the matched class of every patch (ready for `mt.pl.patch_map`), the recovery
+  of each class and the annotated class of every patch.
+- `mt.gr.patch_graph_control` derives a negative-control graph from a stored
+  patch graph: `"shuffled_edges"` permutes the edge destinations with a seed,
+  `"no_edges"` removes every edge. The source graph is left in place.
+- `mt.pl.patch_map` takes `legend=True` (or a mapping of `Axes.legend` options) to
+  add one entry per drawn category. The default, no legend, is unchanged.
+
+Group contrasts and plot options for a cohort analysis. The defaults are unchanged.
+
+- `mt.tl.cluster_cooccurrence` takes `group_col`, the column of `sample_meta` with
+  the experimental group of each sample. The returned details then hold `unit_meta`
+  and a `contrast(case=..., control=...)` method: the mean enrichment of the case
+  units minus that of the control units, each unit counted once, as a table of
+  cluster pairs. It parallels `contrast` on the composition details.
+- `mt.pl.plot_mean_composition` takes `title` (`None` for no title) and
+  `group_labels` (write the group names, or labels of your own, under the bars). Rows
+  of `group_mean` are now matched to `group_order` by label when the index holds
+  those labels.
+- `mt.pl.plot_delta_masked` takes `show_values=True` to write the value in every cell
+  of the unmasked heat map, accepts a table as well as an array, and leaves undefined
+  (NaN) cells white instead of failing to set the colour range.
+- `mt.pl.ecm_centroid_heatmap` takes `colorbar_label` (default `"z"`).
+- `mt.pp.renumber_ecm_clusters` gives the ECM clusters of a cohort new numbers from a
+  `{current: new}` mapping, for example to keep the numbers of an earlier run when two
+  clusters of similar size swap. Every patch stays in its cluster. The patch tables and
+  the stored clustering record are updated.
+
+Per-sample marker contrasts, repeated label reconstruction and per-sample points on two bar
+plots. The defaults of existing functions are unchanged.
+
+- `mt.tl.cell_ecm_marker_contrast` compares, in every sample of a cohort, the ECM marker
+  profile of the patches that touch a cell type with that of the other patches, optionally
+  inside one ECM cluster. It reads the stored cell-ECM graph and the patch table, calls
+  `mt.tl.contact_marker_contrast` once per sample and returns the per-sample contrasts, their
+  mean with every sample counted once, the patch counts and the contacted patches
+  (`CellECMMarkerContrastResult`). A sample in which one of the two groups is empty has no
+  contrast and is left out of the mean.
+- `mt.pl.marker_contrast_bars` draws that result: one horizontal bar per marker for the mean
+  and one point per sample, with `sample_groups` to give the samples of each group (for
+  example each mouse) their own marker shape.
+- `mt.pl.cell_ecm_enrichment_bars` takes `show_samples=True` to draw one point per sample
+  on each bar, with `sample_groups`, `sample_size` and `legend`. A sample with no observed
+  contact is drawn as an open grey marker below the bars, not at its ratio. `annotate="none"`
+  draws the bars without text (for example when no permutation test was run), and the details
+  object of `mt.tl.cell_ecm_enrichment(..., return_details=True)` is accepted in place of
+  the AnnData.
+- `mt.tl.fit_temperature` chooses, from a grid, the temperature that gives the observed labels
+  the lowest mean negative log-probability under a classifier's class probabilities. The
+  result is the `temperature` argument of `mt.tl.label_anomaly_scores` and
+  `mt.tl.reconstruct_labels`.
+- `mt.tl.reconstruct_labels_iteratively` repeats `mt.tl.reconstruct_labels` for up to
+  `max_passes` passes. It takes a function that returns the class probabilities for a set of
+  labels, so context that depends on the labels is recomputed after every pass, and it stops
+  when a pass changes no label. It returns the final labels, the rows that changed and the
+  result of every pass (`IterativeLabelReconstructionResult`).
+- `mt.pl.ecm_centroid_heatmap` takes `values="mean_intensity"` to show the cluster means
+  themselves in place of their z-scores across the clusters, for patch features that are
+  already on a common scale.
+
+### Fixed
+
+- `GraphMAE.fit` on a graph without edges (for example the `"no_edges"` control) no longer
+  emits NumPy `Mean of empty slice` warnings or stores `NaN` edge statistics. The embeddings
+  are unchanged.
+- `mt.pl.ecm_centroid_heatmap` no longer raises `TypeError` when `K_ecm` is left out;
+  the number of clusters is taken from the patch table, as documented.
+
 ## [1.2.0] - 2026-11-09
 
 ### Added

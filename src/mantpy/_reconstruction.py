@@ -12,6 +12,7 @@ import pandas as pd
 from anndata import AnnData
 
 from mantpy._analysis import (
+    LabelReconstructionResult,
     _aligned,
     _categories,
     _ids,
@@ -27,6 +28,24 @@ def _signal_categories(labels, categories) -> pd.Index:
         return _categories([], categories)
     cats = _categories(labels)
     return cats[[not (isinstance(c, int | float | np.number) and c < 0) for c in cats]]
+
+
+def _signal_rows(observed, probabilities, n_classes, categories, signal, ids):
+    """Category index, the code of each observed label and the mask of the signal rows."""
+    if categories is None and isinstance(probabilities, pd.DataFrame):
+        categories = probabilities.columns
+    cats = _categories([], range(n_classes) if categories is None else categories)
+    if ids is None:
+        if isinstance(observed, pd.Series):
+            ids = observed.index
+        elif isinstance(probabilities, pd.DataFrame):
+            ids = probabilities.index
+    row_ids = _ids(ids, len(observed), "ids")
+    codes = cats.get_indexer(np.asarray(_aligned(observed, row_ids, "observed")))
+    is_signal = codes >= 0
+    if signal is not None:
+        is_signal &= np.asarray(_aligned(signal, row_ids, "signal"), dtype=bool)
+    return cats, codes, is_signal
 
 
 # --------------------------------------------------------------------- corruption
@@ -286,10 +305,8 @@ def label_anomaly_scores(
         return scores
     if score != "raw_neglogp":
         raise ValueError("prior is only defined for score='raw_neglogp'.")
-    if categories is None and isinstance(probabilities, pd.DataFrame):
-        categories = probabilities.columns
     n_classes = np.asarray(result.probabilities).shape[1]
-    cats = _categories([], range(n_classes) if categories is None else categories)
+    cats, codes, is_signal = _signal_rows(observed, probabilities, n_classes, categories, signal, ids)
     if isinstance(prior, pd.Series | Mapping):
         prior = pd.Series(prior).reindex(cats)
     frequencies = np.asarray(prior, dtype=float)
@@ -298,20 +315,127 @@ def label_anomaly_scores(
         or (frequencies < 0).any() or not np.isclose(frequencies.sum(), 1.0, rtol=1e-6, atol=1e-8)
     ):
         raise ValueError("prior must give one non-negative frequency per category, summing to one.")
-    if ids is None:
-        if isinstance(observed, pd.Series):
-            ids = observed.index
-        elif isinstance(probabilities, pd.DataFrame):
-            ids = probabilities.index
-    row_ids = _ids(ids, len(observed), "ids")
-    codes = cats.get_indexer(np.asarray(_aligned(observed, row_ids, "observed")))
-    is_signal = codes >= 0
-    if signal is not None:
-        is_signal &= np.asarray(_aligned(signal, row_ids, "signal"), dtype=bool)
     rows = np.flatnonzero(is_signal)
     adjusted = scores.copy()
     adjusted[rows] = adjusted[rows] + np.log(np.maximum(frequencies[codes[rows]], eps))
     return adjusted
+
+
+def fit_temperature(
+    labels,
+    probabilities,
+    *,
+    categories=None,
+    signal=None,
+    grid: Sequence[float] = (0.5, 0.75, 1.0, 1.5, 2.0, 3.0),
+    eps: float = 1e-12,
+    ids=None,
+) -> float:
+    """Choose the temperature that best calibrates class probabilities.
+
+    Each temperature of ``grid`` is applied to ``probabilities`` as in
+    :func:`reconstruct_labels`, and the one with the lowest mean negative
+    log-probability of ``labels`` is returned (the first one on a tie). Use
+    labels the classifier should predict, normally the training labels, and
+    pass the result as ``temperature`` to :func:`label_anomaly_scores` or
+    :func:`reconstruct_labels`. Labels absent from ``categories``
+    (background) and rows outside ``signal`` are not used.
+    """
+    temperatures = np.asarray(grid, dtype=float)
+    if (
+        temperatures.ndim != 1 or not len(temperatures)
+        or not np.isfinite(temperatures).all() or (temperatures <= 0).any()
+    ):
+        raise ValueError("grid must hold one or more finite, positive temperatures.")
+    scores = [
+        label_anomaly_scores(
+            labels, probabilities, categories=categories, signal=signal,
+            score="raw_neglogp", temperature=float(temperature), eps=eps, ids=ids,
+        )
+        for temperature in temperatures
+    ]
+    n_classes = np.asarray(probabilities).shape[1]
+    is_signal = _signal_rows(labels, probabilities, n_classes, categories, signal, ids)[2]
+    if not is_signal.any():
+        raise ValueError("No label belongs to the categories, so no temperature can be fitted.")
+    losses = [values[is_signal].mean() for values in scores]
+    return float(temperatures[int(np.argmin(losses))])
+
+
+# ------------------------------------------------------------- repeated passes
+@dataclass(frozen=True)
+class IterativeLabelReconstructionResult:
+    """Output of :func:`reconstruct_labels_iteratively`.
+
+    ``labels`` are the labels after the last pass and ``relabelled`` marks
+    the rows whose label differs from the observed one. ``passes`` holds the
+    :class:`LabelReconstructionResult` of every pass that was run.
+    """
+
+    labels: np.ndarray
+    relabelled: np.ndarray
+    passes: tuple[LabelReconstructionResult, ...]
+
+    @property
+    def n_passes(self) -> int:
+        return len(self.passes)
+
+
+def reconstruct_labels_iteratively(
+    observed,
+    predict,
+    *,
+    threshold: float,
+    max_passes: int = 1,
+    categories=None,
+    signal=None,
+    score: str = "minmax_neglogp",
+    min_confidence: float = 0.0,
+    coordinates=None,
+    spatial_radius: float | None = None,
+    min_neighbours: int = 0,
+    majority_smoothing: bool = False,
+    temperature: float = 1.0,
+    eps: float = 1e-12,
+    ids=None,
+) -> IterativeLabelReconstructionResult:
+    """Reconstruct labels in repeated passes, predicting again after each pass.
+
+    ``predict(labels)`` returns the class probabilities of every row for the
+    current labels. Each pass is one call of :func:`reconstruct_labels` with
+    the options given here. The next pass predicts from the labels that call
+    returned, so a classifier that reads the labels of neighbouring patches
+    sees the corrections already made. The passes stop after ``max_passes``,
+    or earlier when a pass changes no label. A classifier that does not read
+    the labels needs one pass.
+
+    When ``observed`` is a Series, or ``ids`` is given, ``predict`` receives a
+    Series with those row IDs; otherwise it receives an array.
+    """
+    if not callable(predict):
+        raise TypeError("predict must be a function from the current labels to class probabilities.")
+    if isinstance(max_passes, bool) or not isinstance(max_passes, int | np.integer) or max_passes < 1:
+        raise ValueError("max_passes must be a positive integer.")
+    row_ids = None
+    if ids is not None:
+        row_ids = _ids(ids, len(observed), "ids")
+    elif isinstance(observed, pd.Series):
+        row_ids = observed.index
+    start = np.asarray(observed if row_ids is None else _aligned(observed, row_ids, "observed"))
+    current, passes = start, []
+    for _ in range(int(max_passes)):
+        given = current if row_ids is None else pd.Series(current, index=row_ids)
+        step = reconstruct_labels(
+            given, predict(given), threshold=threshold, categories=categories, signal=signal,
+            score=score, min_confidence=min_confidence, coordinates=coordinates,
+            spatial_radius=spatial_radius, min_neighbours=min_neighbours,
+            majority_smoothing=majority_smoothing, temperature=temperature, eps=eps, ids=row_ids,
+        )
+        passes.append(step)
+        current = np.asarray(step.labels)
+        if not np.asarray(step.relabelled).any():
+            break
+    return IterativeLabelReconstructionResult(current, current != start, tuple(passes))
 
 
 # ------------------------------------------------------------------------ scoring
